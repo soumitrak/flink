@@ -30,12 +30,16 @@ import org.apache.flink.api.common.accumulators.IntCounter;
 import org.apache.flink.api.common.accumulators.LongCounter;
 import org.apache.flink.api.common.cache.DistributedCache;
 import org.apache.flink.api.common.externalresource.ExternalResourceInfo;
+import org.apache.flink.api.common.state.AggregatingMergeState;
+import org.apache.flink.api.common.state.AggregatingMergeStateDescriptor;
 import org.apache.flink.api.common.state.AggregatingState;
 import org.apache.flink.api.common.state.AggregatingStateDescriptor;
 import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
+import org.apache.flink.api.common.state.ReducingMergeState;
+import org.apache.flink.api.common.state.ReducingMergeStateDescriptor;
 import org.apache.flink.api.common.state.ReducingState;
 import org.apache.flink.api.common.state.ReducingStateDescriptor;
 import org.apache.flink.api.common.state.ValueState;
@@ -410,6 +414,50 @@ public interface RuntimeContext {
      */
     @PublicEvolving
     <UK, UV> MapState<UK, UV> getMapState(MapStateDescriptor<UK, UV> stateProperties);
+
+    /**
+     * Gets a handle to the system's key/value reducing merge state. Unlike {@link
+     * #getReducingState(ReducingStateDescriptor)}, this state uses RocksDB's native merge operator
+     * to append values without a synchronous read-modify-write. The reduce function is applied
+     * lazily by RocksDB during compaction or on {@code get()}.
+     *
+     * <p>This state is only accessible if the function is executed on a KeyedStream and the RocksDB
+     * state backend is configured. Using it with other backends will throw {@link
+     * UnsupportedOperationException} at state registration time.
+     *
+     * @param stateProperties The descriptor defining the properties of the state.
+     * @param <T> The type of value stored in the state.
+     * @return The partitioned state object.
+     * @throws UnsupportedOperationException Thrown if the configured state backend does not support
+     *     merge state, or if no partitioned state is available (function is not part of a
+     *     KeyedStream).
+     */
+    @PublicEvolving
+    <T> ReducingMergeState<T> getReducingMergeState(
+            ReducingMergeStateDescriptor<T> stateProperties);
+
+    /**
+     * Gets a handle to the system's key/value aggregating merge state. Unlike {@link
+     * #getAggregatingState(AggregatingStateDescriptor)}, this state uses RocksDB's native merge
+     * operator to append input values without reading the accumulator. The aggregate function is
+     * applied lazily by RocksDB during compaction or on {@code get()}.
+     *
+     * <p>This state is only accessible if the function is executed on a KeyedStream and the RocksDB
+     * state backend is configured. Using it with other backends will throw {@link
+     * UnsupportedOperationException} at state registration time.
+     *
+     * @param stateProperties The descriptor defining the properties of the state.
+     * @param <IN> The type of the values that are added to the state.
+     * @param <ACC> The type of the accumulator (intermediate aggregation state).
+     * @param <OUT> The type of the values that are returned from the state.
+     * @return The partitioned state object.
+     * @throws UnsupportedOperationException Thrown if the configured state backend does not support
+     *     merge state, or if no partitioned state is available (function is not part of a
+     *     KeyedStream).
+     */
+    @PublicEvolving
+    <IN, ACC, OUT> AggregatingMergeState<IN, OUT> getAggregatingMergeState(
+            AggregatingMergeStateDescriptor<IN, ACC, OUT> stateProperties);
 
     // ------------------------------------------------------------------------
     //  Methods for accessing state V2

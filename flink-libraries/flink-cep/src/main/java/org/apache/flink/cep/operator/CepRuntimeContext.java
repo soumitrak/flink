@@ -30,12 +30,16 @@ import org.apache.flink.api.common.cache.DistributedCache;
 import org.apache.flink.api.common.externalresource.ExternalResourceInfo;
 import org.apache.flink.api.common.functions.BroadcastVariableInitializer;
 import org.apache.flink.api.common.functions.RuntimeContext;
+import org.apache.flink.api.common.state.AggregatingMergeState;
+import org.apache.flink.api.common.state.AggregatingMergeStateDescriptor;
 import org.apache.flink.api.common.state.AggregatingState;
 import org.apache.flink.api.common.state.AggregatingStateDescriptor;
 import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
+import org.apache.flink.api.common.state.ReducingMergeState;
+import org.apache.flink.api.common.state.ReducingMergeStateDescriptor;
 import org.apache.flink.api.common.state.ReducingState;
 import org.apache.flink.api.common.state.ReducingStateDescriptor;
 import org.apache.flink.api.common.state.ValueState;
@@ -192,6 +196,18 @@ class CepRuntimeContext implements RuntimeContext {
 
     @Override
     public <UK, UV> MapState<UK, UV> getMapState(final MapStateDescriptor<UK, UV> stateProperties) {
+        throw new UnsupportedOperationException("State is not supported.");
+    }
+
+    @Override
+    public <T> ReducingMergeState<T> getReducingMergeState(
+            final ReducingMergeStateDescriptor<T> stateProperties) {
+        throw new UnsupportedOperationException("State is not supported.");
+    }
+
+    @Override
+    public <IN, ACC, OUT> AggregatingMergeState<IN, OUT> getAggregatingMergeState(
+            final AggregatingMergeStateDescriptor<IN, ACC, OUT> stateProperties) {
         throw new UnsupportedOperationException("State is not supported.");
     }
 

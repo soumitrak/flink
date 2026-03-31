@@ -18,6 +18,8 @@
 
 package org.apache.flink.cep.utils;
 
+import org.apache.flink.api.common.state.AggregatingMergeState;
+import org.apache.flink.api.common.state.AggregatingMergeStateDescriptor;
 import org.apache.flink.api.common.state.AggregatingState;
 import org.apache.flink.api.common.state.AggregatingStateDescriptor;
 import org.apache.flink.api.common.state.KeyedStateStore;
@@ -25,6 +27,8 @@ import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
+import org.apache.flink.api.common.state.ReducingMergeState;
+import org.apache.flink.api.common.state.ReducingMergeStateDescriptor;
 import org.apache.flink.api.common.state.ReducingState;
 import org.apache.flink.api.common.state.ReducingStateDescriptor;
 import org.apache.flink.api.common.state.ValueState;
@@ -134,6 +138,18 @@ public class TestSharedBuffer<V> extends SharedBuffer<V> {
         @Override
         public <IN, ACC, OUT> AggregatingState<IN, OUT> getAggregatingState(
                 AggregatingStateDescriptor<IN, ACC, OUT> stateProperties) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public <T> ReducingMergeState<T> getReducingMergeState(
+                ReducingMergeStateDescriptor<T> stateProperties) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public <IN, ACC, OUT> AggregatingMergeState<IN, OUT> getAggregatingMergeState(
+                AggregatingMergeStateDescriptor<IN, ACC, OUT> stateProperties) {
             throw new UnsupportedOperationException();
         }
 

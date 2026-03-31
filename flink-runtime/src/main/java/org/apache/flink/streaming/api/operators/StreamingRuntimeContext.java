@@ -24,6 +24,8 @@ import org.apache.flink.api.common.accumulators.Accumulator;
 import org.apache.flink.api.common.externalresource.ExternalResourceInfo;
 import org.apache.flink.api.common.functions.BroadcastVariableInitializer;
 import org.apache.flink.api.common.functions.util.AbstractRuntimeUDFContext;
+import org.apache.flink.api.common.state.AggregatingMergeState;
+import org.apache.flink.api.common.state.AggregatingMergeStateDescriptor;
 import org.apache.flink.api.common.state.AggregatingState;
 import org.apache.flink.api.common.state.AggregatingStateDescriptor;
 import org.apache.flink.api.common.state.KeyedStateStore;
@@ -31,6 +33,8 @@ import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
+import org.apache.flink.api.common.state.ReducingMergeState;
+import org.apache.flink.api.common.state.ReducingMergeStateDescriptor;
 import org.apache.flink.api.common.state.ReducingState;
 import org.apache.flink.api.common.state.ReducingStateDescriptor;
 import org.apache.flink.api.common.state.StateDescriptor;
@@ -234,6 +238,22 @@ public class StreamingRuntimeContext extends AbstractRuntimeUDFContext {
         KeyedStateStore keyedStateStore = checkPreconditionsAndGetKeyedStateStore(stateProperties);
         stateProperties.initializeSerializerUnlessSet(this::createSerializer);
         return keyedStateStore.getMapState(stateProperties);
+    }
+
+    @Override
+    public <T> ReducingMergeState<T> getReducingMergeState(
+            ReducingMergeStateDescriptor<T> stateProperties) {
+        KeyedStateStore keyedStateStore = checkPreconditionsAndGetKeyedStateStore(stateProperties);
+        stateProperties.initializeSerializerUnlessSet(this::createSerializer);
+        return keyedStateStore.getReducingMergeState(stateProperties);
+    }
+
+    @Override
+    public <IN, ACC, OUT> AggregatingMergeState<IN, OUT> getAggregatingMergeState(
+            AggregatingMergeStateDescriptor<IN, ACC, OUT> stateProperties) {
+        KeyedStateStore keyedStateStore = checkPreconditionsAndGetKeyedStateStore(stateProperties);
+        stateProperties.initializeSerializerUnlessSet(this::createSerializer);
+        return keyedStateStore.getAggregatingMergeState(stateProperties);
     }
 
     private KeyedStateStore checkPreconditionsAndGetKeyedStateStore(

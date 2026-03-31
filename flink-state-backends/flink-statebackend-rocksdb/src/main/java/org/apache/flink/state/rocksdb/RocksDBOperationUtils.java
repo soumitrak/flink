@@ -29,6 +29,7 @@ import org.apache.flink.util.IOUtils;
 import org.apache.flink.util.OperatingSystem;
 import org.apache.flink.util.Preconditions;
 
+import org.rocksdb.AbstractMergeOperator;
 import org.rocksdb.ColumnFamilyDescriptor;
 import org.rocksdb.ColumnFamilyHandle;
 import org.rocksdb.ColumnFamilyOptions;
@@ -273,6 +274,62 @@ public class RocksDBOperationUtils {
         return columnFamilyOptionsFactory
                 .apply(stateName)
                 .setMergeOperatorName(MERGE_OPERATOR_NAME);
+    }
+
+    /**
+     * Creates a state info using a custom Java {@link AbstractMergeOperator} instead of the default
+     * string-append merge operator. Used for merge-operator-backed state types such as {@link
+     * RocksDBReducingMergeState} and {@link RocksDBAggregatingMergeState}.
+     *
+     * <p>The {@code mergeOperator} reference is stored inside the {@link ColumnFamilyOptions} to
+     * prevent it from being garbage-collected while the column family is open.
+     */
+    public static RocksDBKeyedStateBackend.RocksDbKvStateInfo createStateInfoWithMergeOperator(
+            RegisteredStateMetaInfoBase metaInfoBase,
+            RocksDB db,
+            Function<String, ColumnFamilyOptions> columnFamilyOptionsFactory,
+            AbstractMergeOperator mergeOperator,
+            @Nullable RocksDbTtlCompactFiltersManager ttlCompactFiltersManager,
+            @Nullable Long writeBufferManagerCapacity,
+            ICloseableRegistry cancelStreamRegistryForRestore) {
+
+        byte[] nameBytes = metaInfoBase.getName().getBytes(ConfigConstants.DEFAULT_CHARSET);
+        Preconditions.checkState(
+                !Arrays.equals(RocksDB.DEFAULT_COLUMN_FAMILY, nameBytes),
+                "The chosen state name 'default' collides with the name of the default column family!");
+
+        ColumnFamilyOptions options =
+                columnFamilyOptionsFactory
+                        .apply(metaInfoBase.getName())
+                        .setMergeOperator(mergeOperator);
+
+        if (ttlCompactFiltersManager != null) {
+            ttlCompactFiltersManager.setAndRegisterCompactFilterIfStateTtl(metaInfoBase, options);
+        }
+
+        if (writeBufferManagerCapacity != null) {
+            sanityCheckArenaBlockSize(
+                    options.writeBufferSize(),
+                    options.arenaBlockSize(),
+                    writeBufferManagerCapacity);
+        }
+
+        ColumnFamilyDescriptor columnFamilyDescriptor =
+                new ColumnFamilyDescriptor(nameBytes, options);
+        try {
+            ColumnFamilyHandle columnFamilyHandle =
+                    createColumnFamily(
+                            columnFamilyDescriptor,
+                            db,
+                            Collections.emptyList(),
+                            cancelStreamRegistryForRestore);
+            return new RocksDBKeyedStateBackend.RocksDbKvStateInfo(
+                    columnFamilyHandle, metaInfoBase);
+        } catch (Exception ex) {
+            IOUtils.closeQuietly(columnFamilyDescriptor.getOptions());
+            throw new FlinkRuntimeException(
+                    "Error creating ColumnFamilyHandle with custom merge operator.", ex);
+        }
     }
 
     public static ColumnFamilyHandle createColumnFamily(

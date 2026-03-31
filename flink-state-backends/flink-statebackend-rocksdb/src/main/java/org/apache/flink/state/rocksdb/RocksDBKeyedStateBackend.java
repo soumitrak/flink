@@ -19,6 +19,8 @@ package org.apache.flink.state.rocksdb;
 
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.ExecutionConfig;
+import org.apache.flink.api.common.state.AggregatingMergeStateDescriptor;
+import org.apache.flink.api.common.state.ReducingMergeStateDescriptor;
 import org.apache.flink.api.common.state.State;
 import org.apache.flink.api.common.state.StateDescriptor;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
@@ -148,7 +150,13 @@ public class RocksDBKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                                     (StateCreateFactory) RocksDBAggregatingState::create),
                             Tuple2.of(
                                     StateDescriptor.Type.REDUCING,
-                                    (StateCreateFactory) RocksDBReducingState::create))
+                                    (StateCreateFactory) RocksDBReducingState::create),
+                            Tuple2.of(
+                                    StateDescriptor.Type.REDUCING_MERGE,
+                                    (StateCreateFactory) RocksDBReducingMergeState::create),
+                            Tuple2.of(
+                                    StateDescriptor.Type.AGGREGATING_MERGE,
+                                    (StateCreateFactory) RocksDBAggregatingMergeState::create))
                     .collect(Collectors.toMap(t -> t.f0, t -> t.f1));
 
     private static final Map<StateDescriptor.Type, StateUpdateFactory> STATE_UPDATE_FACTORIES =
@@ -167,7 +175,13 @@ public class RocksDBKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                                     (StateUpdateFactory) RocksDBAggregatingState::update),
                             Tuple2.of(
                                     StateDescriptor.Type.REDUCING,
-                                    (StateUpdateFactory) RocksDBReducingState::update))
+                                    (StateUpdateFactory) RocksDBReducingState::update),
+                            Tuple2.of(
+                                    StateDescriptor.Type.REDUCING_MERGE,
+                                    (StateUpdateFactory) RocksDBReducingMergeState::update),
+                            Tuple2.of(
+                                    StateDescriptor.Type.AGGREGATING_MERGE,
+                                    (StateUpdateFactory) RocksDBAggregatingMergeState::update))
                     .collect(Collectors.toMap(t -> t.f0, t -> t.f1));
     private final RocksDBManualCompactionManager sstMergeManager;
 
@@ -738,6 +752,14 @@ public class RocksDBKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
         checkpointSnapshotStrategy.notifyCheckpointAborted(checkpointId);
     }
 
+    private static <IN, ACC, OUT>
+            RocksDBAggregatingMergeOperator<IN, ACC, OUT> createAggregatingMergeOperator(
+                    AggregatingMergeStateDescriptor<IN, ACC, OUT> mergeDesc,
+                    TypeSerializer<ACC> accSerializer) {
+        return new RocksDBAggregatingMergeOperator<>(
+                mergeDesc.getAggregateFunction(), mergeDesc.getInputSerializer(), accSerializer);
+    }
+
     /**
      * Registers a k/v state information, which includes its state id, type, RocksDB column family
      * handle, and serializers.
@@ -797,16 +819,48 @@ public class RocksDBKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                             ? newMetaInfo.withSerializerUpgradesAllowed()
                             : newMetaInfo;
 
-            newRocksStateInfo =
-                    RocksDBOperationUtils.createStateInfo(
-                            newMetaInfo,
-                            db,
-                            columnFamilyOptionsFactory,
-                            ttlCompactFiltersManager,
-                            optionsContainer.getWriteBufferManagerCapacity(),
-                            // Using ICloseableRegistry.NO_OP here because there is no restore in
-                            // progress; created column families will be closed in dispose()
-                            ICloseableRegistry.NO_OP);
+            if (stateDesc instanceof ReducingMergeStateDescriptor) {
+                @SuppressWarnings("unchecked")
+                org.rocksdb.AbstractMergeOperator mergeOperator =
+                        new RocksDBReducingMergeOperator<>(
+                                ((ReducingMergeStateDescriptor<SV>) stateDesc).getReduceFunction(),
+                                stateSerializer);
+                newRocksStateInfo =
+                        RocksDBOperationUtils.createStateInfoWithMergeOperator(
+                                newMetaInfo,
+                                db,
+                                columnFamilyOptionsFactory,
+                                mergeOperator,
+                                ttlCompactFiltersManager,
+                                optionsContainer.getWriteBufferManagerCapacity(),
+                                ICloseableRegistry.NO_OP);
+            } else if (stateDesc instanceof AggregatingMergeStateDescriptor) {
+                @SuppressWarnings("unchecked")
+                org.rocksdb.AbstractMergeOperator mergeOperator =
+                        createAggregatingMergeOperator(
+                                (AggregatingMergeStateDescriptor<?, SV, ?>) stateDesc,
+                                stateSerializer);
+                newRocksStateInfo =
+                        RocksDBOperationUtils.createStateInfoWithMergeOperator(
+                                newMetaInfo,
+                                db,
+                                columnFamilyOptionsFactory,
+                                mergeOperator,
+                                ttlCompactFiltersManager,
+                                optionsContainer.getWriteBufferManagerCapacity(),
+                                ICloseableRegistry.NO_OP);
+            } else {
+                newRocksStateInfo =
+                        RocksDBOperationUtils.createStateInfo(
+                                newMetaInfo,
+                                db,
+                                columnFamilyOptionsFactory,
+                                ttlCompactFiltersManager,
+                                optionsContainer.getWriteBufferManagerCapacity(),
+                                // Using ICloseableRegistry.NO_OP here because there is no restore
+                                // in progress; created column families will be closed in dispose()
+                                ICloseableRegistry.NO_OP);
+            }
             RocksDBOperationUtils.registerKvStateInformation(
                     this.kvStateInformation,
                     this.nativeMetricMonitor,

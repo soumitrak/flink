@@ -227,6 +227,46 @@ public interface KeyedStateStore {
     @PublicEvolving
     <UK, UV> MapState<UK, UV> getMapState(MapStateDescriptor<UK, UV> stateProperties);
 
+    /**
+     * Gets a handle to the system's key/value reducing merge state. Unlike {@link
+     * #getReducingState(ReducingStateDescriptor)}, this state uses RocksDB's native merge operator
+     * to append values without reading the existing state. The reduce function is applied lazily by
+     * RocksDB during compaction or on {@code get()}.
+     *
+     * <p>This state is only accessible if the function is executed on a KeyedStream and the RocksDB
+     * state backend is configured.
+     *
+     * @param stateProperties The descriptor defining the properties of the state.
+     * @param <T> The type of value stored in the state.
+     * @return The partitioned state object.
+     * @throws UnsupportedOperationException Thrown if the configured state backend does not support
+     *     merge state.
+     */
+    @PublicEvolving
+    <T> ReducingMergeState<T> getReducingMergeState(
+            ReducingMergeStateDescriptor<T> stateProperties);
+
+    /**
+     * Gets a handle to the system's key/value aggregating merge state. Unlike {@link
+     * #getAggregatingState(AggregatingStateDescriptor)}, this state uses RocksDB's native merge
+     * operator to append input values without reading the accumulator. The aggregate function is
+     * applied lazily by RocksDB during compaction or on {@code get()}.
+     *
+     * <p>This state is only accessible if the function is executed on a KeyedStream and the RocksDB
+     * state backend is configured.
+     *
+     * @param stateProperties The descriptor defining the properties of the state.
+     * @param <IN> The type of the values that are added to the state.
+     * @param <ACC> The type of the accumulator (intermediate aggregation state).
+     * @param <OUT> The type of the values that are returned from the state.
+     * @return The partitioned state object.
+     * @throws UnsupportedOperationException Thrown if the configured state backend does not support
+     *     merge state.
+     */
+    @PublicEvolving
+    <IN, ACC, OUT> AggregatingMergeState<IN, OUT> getAggregatingMergeState(
+            AggregatingMergeStateDescriptor<IN, ACC, OUT> stateProperties);
+
     // --------------------------
     // State V2 creation methods
     // --------------------------

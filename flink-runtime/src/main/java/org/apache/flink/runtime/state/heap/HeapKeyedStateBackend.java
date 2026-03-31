@@ -102,7 +102,16 @@ public class HeapKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                                     (StateCreateFactory) HeapAggregatingState::create),
                             Tuple2.of(
                                     StateDescriptor.Type.REDUCING,
-                                    (StateCreateFactory) HeapReducingState::create))
+                                    (StateCreateFactory) HeapReducingState::create),
+                            Tuple2.of(
+                                    StateDescriptor.Type.REDUCING_MERGE,
+                                    (StateCreateFactory)
+                                            HeapKeyedStateBackend::unsupportedReducingMergeCreate),
+                            Tuple2.of(
+                                    StateDescriptor.Type.AGGREGATING_MERGE,
+                                    (StateCreateFactory)
+                                            HeapKeyedStateBackend
+                                                    ::unsupportedAggregatingMergeCreate))
                     .collect(Collectors.toMap(t -> t.f0, t -> t.f1));
 
     private static final Map<StateDescriptor.Type, StateUpdateFactory> STATE_UPDATE_FACTORIES =
@@ -121,7 +130,16 @@ public class HeapKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                                     (StateUpdateFactory) HeapAggregatingState::update),
                             Tuple2.of(
                                     StateDescriptor.Type.REDUCING,
-                                    (StateUpdateFactory) HeapReducingState::update))
+                                    (StateUpdateFactory) HeapReducingState::update),
+                            Tuple2.of(
+                                    StateDescriptor.Type.REDUCING_MERGE,
+                                    (StateUpdateFactory)
+                                            HeapKeyedStateBackend::unsupportedReducingMergeUpdate),
+                            Tuple2.of(
+                                    StateDescriptor.Type.AGGREGATING_MERGE,
+                                    (StateUpdateFactory)
+                                            HeapKeyedStateBackend
+                                                    ::unsupportedAggregatingMergeUpdate))
                     .collect(Collectors.toMap(t -> t.f0, t -> t.f1));
 
     /** Map of created Key/Value states. */
@@ -595,5 +613,33 @@ public class HeapKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
         <K, N, SV, S extends State, IS extends S> IS updateState(
                 StateDescriptor<S, SV> stateDesc, StateTable<K, N, SV> stateTable, IS existingState)
                 throws Exception;
+    }
+
+    private static <K, N, SV, S extends State, IS extends S> IS unsupportedReducingMergeCreate(
+            StateDescriptor<S, SV> stateDesc,
+            StateTable<K, N, SV> stateTable,
+            TypeSerializer<K> keySerializer) {
+        throw new UnsupportedOperationException(
+                "ReducingMergeState is only supported by the RocksDB state backend.");
+    }
+
+    private static <K, N, SV, S extends State, IS extends S> IS unsupportedAggregatingMergeCreate(
+            StateDescriptor<S, SV> stateDesc,
+            StateTable<K, N, SV> stateTable,
+            TypeSerializer<K> keySerializer) {
+        throw new UnsupportedOperationException(
+                "AggregatingMergeState is only supported by the RocksDB state backend.");
+    }
+
+    private static <K, N, SV, S extends State, IS extends S> IS unsupportedReducingMergeUpdate(
+            StateDescriptor<S, SV> stateDesc, StateTable<K, N, SV> stateTable, IS existingState) {
+        throw new UnsupportedOperationException(
+                "ReducingMergeState is only supported by the RocksDB state backend.");
+    }
+
+    private static <K, N, SV, S extends State, IS extends S> IS unsupportedAggregatingMergeUpdate(
+            StateDescriptor<S, SV> stateDesc, StateTable<K, N, SV> stateTable, IS existingState) {
+        throw new UnsupportedOperationException(
+                "AggregatingMergeState is only supported by the RocksDB state backend.");
     }
 }

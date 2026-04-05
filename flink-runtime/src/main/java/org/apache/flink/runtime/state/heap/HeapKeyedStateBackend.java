@@ -615,6 +615,10 @@ public class HeapKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                 throws Exception;
     }
 
+    /**
+     * State-create stub for {@code ReducingMergeState} on the heap backend. Always throws {@link
+     * UnsupportedOperationException} because merge-operator-backed state requires RocksDB.
+     */
     private static <K, N, SV, S extends State, IS extends S> IS unsupportedReducingMergeCreate(
             StateDescriptor<S, SV> stateDesc,
             StateTable<K, N, SV> stateTable,
@@ -623,6 +627,10 @@ public class HeapKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                 "ReducingMergeState is only supported by the RocksDB state backend.");
     }
 
+    /**
+     * State-create stub for {@code AggregatingMergeState} on the heap backend. Always throws
+     * {@link UnsupportedOperationException} because merge-operator-backed state requires RocksDB.
+     */
     private static <K, N, SV, S extends State, IS extends S> IS unsupportedAggregatingMergeCreate(
             StateDescriptor<S, SV> stateDesc,
             StateTable<K, N, SV> stateTable,
@@ -631,12 +639,20 @@ public class HeapKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                 "AggregatingMergeState is only supported by the RocksDB state backend.");
     }
 
+    /**
+     * State-update stub for {@code ReducingMergeState} on the heap backend. Always throws {@link
+     * UnsupportedOperationException} because merge-operator-backed state requires RocksDB.
+     */
     private static <K, N, SV, S extends State, IS extends S> IS unsupportedReducingMergeUpdate(
             StateDescriptor<S, SV> stateDesc, StateTable<K, N, SV> stateTable, IS existingState) {
         throw new UnsupportedOperationException(
                 "ReducingMergeState is only supported by the RocksDB state backend.");
     }
 
+    /**
+     * State-update stub for {@code AggregatingMergeState} on the heap backend. Always throws
+     * {@link UnsupportedOperationException} because merge-operator-backed state requires RocksDB.
+     */
     private static <K, N, SV, S extends State, IS extends S> IS unsupportedAggregatingMergeUpdate(
             StateDescriptor<S, SV> stateDesc, StateTable<K, N, SV> stateTable, IS existingState) {
         throw new UnsupportedOperationException(

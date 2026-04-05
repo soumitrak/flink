@@ -88,7 +88,8 @@ public class RocksDBFullRestoreOperation<K> implements RocksDBRestoreOperation {
                         nativeMetricOptions,
                         metricGroup,
                         ttlCompactFiltersManager,
-                        writeBufferManagerCapacity);
+                        writeBufferManagerCapacity,
+                        userCodeClassLoader);
         this.savepointRestoreOperation =
                 new FullSnapshotRestoreOperation<>(
                         keyGroupRange,

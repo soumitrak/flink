@@ -110,7 +110,8 @@ public class RocksDBHeapTimersFullRestoreOperation<K> implements RocksDBRestoreO
                         nativeMetricOptions,
                         metricGroup,
                         ttlCompactFiltersManager,
-                        writeBufferManagerCapacity);
+                        writeBufferManagerCapacity,
+                        userCodeClassLoader);
         this.savepointRestoreOperation =
                 new FullSnapshotRestoreOperation<>(
                         keyGroupRange,

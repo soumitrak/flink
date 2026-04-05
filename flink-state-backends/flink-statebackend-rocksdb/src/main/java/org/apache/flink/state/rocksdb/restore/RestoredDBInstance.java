@@ -20,12 +20,14 @@
 package org.apache.flink.state.rocksdb.restore;
 
 import org.apache.flink.runtime.state.IncrementalLocalKeyedStateHandle;
+import org.apache.flink.runtime.state.RegisteredKeyValueStateBackendMetaInfo;
 import org.apache.flink.runtime.state.RegisteredStateMetaInfoBase;
 import org.apache.flink.runtime.state.metainfo.StateMetaInfoSnapshot;
 import org.apache.flink.state.rocksdb.RocksDBOperationUtils;
 import org.apache.flink.state.rocksdb.ttl.RocksDbTtlCompactFiltersManager;
 import org.apache.flink.util.IOUtils;
 
+import org.rocksdb.AbstractMergeOperator;
 import org.rocksdb.ColumnFamilyDescriptor;
 import org.rocksdb.ColumnFamilyHandle;
 import org.rocksdb.ColumnFamilyOptions;
@@ -97,7 +99,8 @@ public class RestoredDBInstance implements AutoCloseable {
             Function<String, ColumnFamilyOptions> columnFamilyOptionsFactory,
             DBOptions dbOptions,
             RocksDbTtlCompactFiltersManager ttlCompactFiltersManager,
-            Long writeBufferManagerCapacity)
+            Long writeBufferManagerCapacity,
+            ClassLoader userCodeClassLoader)
             throws Exception {
 
         Function<String, ColumnFamilyOptions> tempDBCfFactory =
@@ -110,7 +113,8 @@ public class RestoredDBInstance implements AutoCloseable {
                         tempDBCfFactory,
                         ttlCompactFiltersManager,
                         writeBufferManagerCapacity,
-                        false);
+                        false,
+                        userCodeClassLoader);
 
         Path restoreSourcePath = stateHandle.getDirectoryStateHandle().getDirectory();
 
@@ -136,13 +140,18 @@ public class RestoredDBInstance implements AutoCloseable {
     /**
      * This method recreates and registers all {@link ColumnFamilyDescriptor} from Flink's state
      * metadata snapshot.
+     *
+     * <p>For merge-operator-backed states ({@code REDUCING_MERGE} / {@code AGGREGATING_MERGE}), the
+     * column family descriptor is created with the correct custom merge operator so that pending
+     * merge operands in the SST files are handled correctly when RocksDB is opened.
      */
     public static List<ColumnFamilyDescriptor> createColumnFamilyDescriptors(
             List<StateMetaInfoSnapshot> stateMetaInfoSnapshots,
             Function<String, ColumnFamilyOptions> columnFamilyOptionsFactory,
             RocksDbTtlCompactFiltersManager ttlCompactFiltersManager,
             Long writeBufferManagerCapacity,
-            boolean registerTtlCompactFilter) {
+            boolean registerTtlCompactFilter,
+            ClassLoader userCodeClassLoader) {
 
         List<ColumnFamilyDescriptor> columnFamilyDescriptors =
                 new ArrayList<>(stateMetaInfoSnapshots.size());
@@ -151,15 +160,52 @@ public class RestoredDBInstance implements AutoCloseable {
             RegisteredStateMetaInfoBase metaInfoBase =
                     RegisteredStateMetaInfoBase.fromMetaInfoSnapshot(stateMetaInfoSnapshot);
 
-            ColumnFamilyDescriptor columnFamilyDescriptor =
-                    RocksDBOperationUtils.createColumnFamilyDescriptor(
-                            metaInfoBase,
-                            columnFamilyOptionsFactory,
-                            registerTtlCompactFilter ? ttlCompactFiltersManager : null,
-                            writeBufferManagerCapacity);
+            AbstractMergeOperator mergeOperator =
+                    metaInfoBase instanceof RegisteredKeyValueStateBackendMetaInfo
+                            ? RocksDBOperationUtils.tryCreateMergeOperator(
+                                    (RegisteredKeyValueStateBackendMetaInfo<?, ?>) metaInfoBase,
+                                    userCodeClassLoader)
+                            : null;
+
+            ColumnFamilyDescriptor columnFamilyDescriptor;
+            if (mergeOperator != null) {
+                columnFamilyDescriptor =
+                        RocksDBOperationUtils.createColumnFamilyDescriptorWithMergeOperator(
+                                metaInfoBase,
+                                columnFamilyOptionsFactory,
+                                mergeOperator,
+                                registerTtlCompactFilter ? ttlCompactFiltersManager : null,
+                                writeBufferManagerCapacity);
+            } else {
+                columnFamilyDescriptor =
+                        RocksDBOperationUtils.createColumnFamilyDescriptor(
+                                metaInfoBase,
+                                columnFamilyOptionsFactory,
+                                registerTtlCompactFilter ? ttlCompactFiltersManager : null,
+                                writeBufferManagerCapacity);
+            }
 
             columnFamilyDescriptors.add(columnFamilyDescriptor);
         }
         return columnFamilyDescriptors;
+    }
+
+    /**
+     * Overload that uses the current thread's context class loader. Kept for binary compatibility
+     * with callers that do not have a dedicated user-code class loader.
+     */
+    public static List<ColumnFamilyDescriptor> createColumnFamilyDescriptors(
+            List<StateMetaInfoSnapshot> stateMetaInfoSnapshots,
+            Function<String, ColumnFamilyOptions> columnFamilyOptionsFactory,
+            RocksDbTtlCompactFiltersManager ttlCompactFiltersManager,
+            Long writeBufferManagerCapacity,
+            boolean registerTtlCompactFilter) {
+        return createColumnFamilyDescriptors(
+                stateMetaInfoSnapshots,
+                columnFamilyOptionsFactory,
+                ttlCompactFiltersManager,
+                writeBufferManagerCapacity,
+                registerTtlCompactFilter,
+                Thread.currentThread().getContextClassLoader());
     }
 }

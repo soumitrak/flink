@@ -67,6 +67,8 @@ public class DistributeStateHandlerHelper implements AutoCloseable {
      * @param keyGroupRange target key group range (for logging)
      * @param operatorIdentifier operator identifier (for logging)
      * @param index current processing index (for logging)
+     * @param userCodeClassLoader the class loader for user-defined classes, used for deserializing
+     *     state meta information
      * @throws Exception on any database opening error
      */
     public DistributeStateHandlerHelper(
@@ -79,7 +81,8 @@ public class DistributeStateHandlerHelper implements AutoCloseable {
             int keyGroupPrefixBytes,
             KeyGroupRange keyGroupRange,
             String operatorIdentifier,
-            int index)
+            int index,
+            ClassLoader userCodeClassLoader)
             throws Exception {
         this.stateHandle = stateHandle;
         this.keyGroupPrefixBytes = keyGroupPrefixBytes;
@@ -99,7 +102,8 @@ public class DistributeStateHandlerHelper implements AutoCloseable {
                         columnFamilyOptionsFactory,
                         dbOptions,
                         ttlCompactFiltersManager,
-                        writeBufferManagerCapacity);
+                        writeBufferManagerCapacity,
+                        userCodeClassLoader);
     }
 
     /**

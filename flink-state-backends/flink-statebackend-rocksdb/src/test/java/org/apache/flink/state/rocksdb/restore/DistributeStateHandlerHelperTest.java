@@ -195,6 +195,7 @@ public class DistributeStateHandlerHelperTest extends TestLogger {
                 KEY_GROUP_PREFIX_BYTES,
                 KEY_GROUP_RANGE,
                 "test-operator",
-                0);
+                0,
+                Thread.currentThread().getContextClassLoader());
     }
 }

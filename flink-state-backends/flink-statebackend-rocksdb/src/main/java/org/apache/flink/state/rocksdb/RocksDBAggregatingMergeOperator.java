@@ -48,6 +48,13 @@ class RocksDBAggregatingMergeOperator<IN, ACC, OUT> extends AbstractMergeOperato
     private final TypeSerializer<IN> inputSerializer;
     private final TypeSerializer<ACC> accSerializer;
 
+    /**
+     * Creates a new operator with the given aggregate function and serializers.
+     *
+     * @param aggFunction the aggregate function to apply during merge
+     * @param inputSerializer serializer for input values ({@code IN})
+     * @param accSerializer serializer for accumulator values ({@code ACC})
+     */
     RocksDBAggregatingMergeOperator(
             AggregateFunction<IN, ACC, OUT> aggFunction,
             TypeSerializer<IN> inputSerializer,
@@ -63,6 +70,19 @@ class RocksDBAggregatingMergeOperator<IN, ACC, OUT> extends AbstractMergeOperato
         return "RocksDBAggregatingMergeOperator";
     }
 
+    /**
+     * Applies the aggregate function to fold all operands into the existing accumulator.
+     *
+     * <p>If no existing value is present a fresh accumulator is created via {@link
+     * AggregateFunction#createAccumulator()}. Each operand (serialized {@code IN}) is deserialized
+     * and added to the accumulator via {@link AggregateFunction#add}. The resulting accumulator is
+     * serialized and returned as the new base value.
+     *
+     * @param key the RocksDB key (unused)
+     * @param existing the current base value (serialized {@code ACC}), or {@code null} if absent
+     * @param operands the pending merge operands (each a serialized {@code IN})
+     * @return the serialized merged accumulator
+     */
     @Override
     public byte[] fullMerge(ByteBuffer key, ByteBuffer existing, ByteBuffer[] operands) {
         try {
@@ -88,8 +108,13 @@ class RocksDBAggregatingMergeOperator<IN, ACC, OUT> extends AbstractMergeOperato
         }
     }
 
-    // Partial merge is declined because IN and ACC may be different types.
-    // RocksDB will keep both operands and let fullMerge handle them.
+    /**
+     * Declines partial merge because {@code IN} and {@code ACC} may be different types, making it
+     * impossible to reduce two raw input operands into one. RocksDB will retain both operands and
+     * let {@link #fullMerge} handle them when the value is read.
+     *
+     * @return {@code null} to signal that partial merge is not supported
+     */
     @Override
     public byte[] partialMerge(ByteBuffer key, ByteBuffer left, ByteBuffer right) {
         return null;

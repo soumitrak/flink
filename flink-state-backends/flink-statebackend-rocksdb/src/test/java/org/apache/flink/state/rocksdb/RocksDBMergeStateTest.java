@@ -17,6 +17,7 @@
 
 package org.apache.flink.state.rocksdb;
 
+import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.functions.AggregateFunction;
 import org.apache.flink.api.common.state.AggregatingMergeState;
 import org.apache.flink.api.common.state.AggregatingMergeStateDescriptor;
@@ -30,14 +31,29 @@ import org.apache.flink.api.common.typeutils.base.IntSerializer;
 import org.apache.flink.api.common.typeutils.base.LongSerializer;
 import org.apache.flink.api.common.typeutils.base.StringSerializer;
 import org.apache.flink.api.common.typeutils.base.array.LongPrimitiveArraySerializer;
+import org.apache.flink.core.execution.SavepointFormatType;
+import org.apache.flink.runtime.checkpoint.CheckpointOptions;
+import org.apache.flink.runtime.checkpoint.SavepointType;
+import org.apache.flink.runtime.state.CheckpointStorageLocationReference;
+import org.apache.flink.runtime.state.KeyGroupRange;
+import org.apache.flink.runtime.state.KeyedStateHandle;
+import org.apache.flink.runtime.state.RegisteredKeyValueStateBackendMetaInfo;
+import org.apache.flink.runtime.state.RegisteredStateMetaInfoBase;
+import org.apache.flink.runtime.state.SharedStateRegistryImpl;
+import org.apache.flink.runtime.state.SnapshotResult;
 import org.apache.flink.runtime.state.VoidNamespace;
 import org.apache.flink.runtime.state.VoidNamespaceSerializer;
+import org.apache.flink.runtime.state.storage.FileSystemCheckpointStorage;
+import org.apache.flink.runtime.state.storage.JobManagerCheckpointStorage;
+import org.apache.flink.state.rocksdb.RocksDBKeyedStateBackend.RocksDbKvStateInfo;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.concurrent.RunnableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -203,6 +219,75 @@ class RocksDBMergeStateTest {
         }
     }
 
+    @Test
+    void testReducingMergeStateMergeNamespacesIntoExistingTarget() throws Exception {
+        RocksDBKeyedStateBackend<Integer> backend =
+                RocksDBTestUtils.builderForTestDefaults(tempDir, IntSerializer.INSTANCE).build();
+
+        try {
+            ReducingMergeStateDescriptor<Long> desc =
+                    new ReducingMergeStateDescriptor<>(
+                            "sumState", Long::sum, LongSerializer.INSTANCE);
+
+            backend.setCurrentKey(1);
+
+            ReducingMergeState<Long> stateNs1 =
+                    backend.getPartitionedState("ns1", StringSerializer.INSTANCE, desc);
+            stateNs1.add(10L);
+
+            ReducingMergeState<Long> stateTarget =
+                    backend.getPartitionedState("target", StringSerializer.INSTANCE, desc);
+            stateTarget.add(100L);
+
+            org.apache.flink.runtime.state.internal.InternalReducingMergeState<
+                            Integer, String, Long>
+                    internalState =
+                            (org.apache.flink.runtime.state.internal.InternalReducingMergeState<
+                                            Integer, String, Long>)
+                                    stateNs1;
+            internalState.mergeNamespaces("target", Arrays.asList("ns1"));
+
+            // target (100) + ns1 (10) = 110
+            assertThat(backend.getPartitionedState("target", StringSerializer.INSTANCE, desc).get())
+                    .isEqualTo(110L);
+            assertThat(backend.getPartitionedState("ns1", StringSerializer.INSTANCE, desc).get())
+                    .isNull();
+        } finally {
+            backend.dispose();
+        }
+    }
+
+    @Test
+    void testReducingMergeStateMergeNamespacesWithNullAndMissingSource() throws Exception {
+        RocksDBKeyedStateBackend<Integer> backend =
+                RocksDBTestUtils.builderForTestDefaults(tempDir, IntSerializer.INSTANCE).build();
+
+        try {
+            ReducingMergeStateDescriptor<Long> desc =
+                    new ReducingMergeStateDescriptor<>(
+                            "sumState", Long::sum, LongSerializer.INSTANCE);
+
+            backend.setCurrentKey(1);
+            ReducingMergeState<Long> stateNs1 =
+                    backend.getPartitionedState("ns1", StringSerializer.INSTANCE, desc);
+            stateNs1.add(42L);
+            // ns2 intentionally has no data; null is passed as a third source
+
+            org.apache.flink.runtime.state.internal.InternalReducingMergeState<
+                            Integer, String, Long>
+                    internalState =
+                            (org.apache.flink.runtime.state.internal.InternalReducingMergeState<
+                                            Integer, String, Long>)
+                                    stateNs1;
+            internalState.mergeNamespaces("target", Arrays.asList("ns1", null, "ns2"));
+
+            assertThat(backend.getPartitionedState("target", StringSerializer.INSTANCE, desc).get())
+                    .isEqualTo(42L);
+        } finally {
+            backend.dispose();
+        }
+    }
+
     // -------------------------------------------------------------------------
     // AggregatingMergeState tests
     // -------------------------------------------------------------------------
@@ -340,6 +425,83 @@ class RocksDBMergeStateTest {
                     .isNull();
             assertThat(backend.getPartitionedState("ns2", StringSerializer.INSTANCE, desc).get())
                     .isNull();
+        } finally {
+            backend.dispose();
+        }
+    }
+
+    @Test
+    void testAggregatingMergeStateMergeNamespacesIntoExistingTarget() throws Exception {
+        RocksDBKeyedStateBackend<Integer> backend =
+                RocksDBTestUtils.builderForTestDefaults(tempDir, IntSerializer.INSTANCE).build();
+
+        try {
+            AggregatingMergeStateDescriptor<Long, long[], Long> desc =
+                    new AggregatingMergeStateDescriptor<>(
+                            "aggSum",
+                            new AverageAggregateFunction(),
+                            LongSerializer.INSTANCE,
+                            LongPrimitiveArraySerializer.INSTANCE);
+
+            backend.setCurrentKey(1);
+
+            AggregatingMergeState<Long, Long> stateNs1 =
+                    backend.getPartitionedState("ns1", StringSerializer.INSTANCE, desc);
+            stateNs1.add(10L);
+            stateNs1.add(20L); // ns1 acc: [30, 2]
+
+            AggregatingMergeState<Long, Long> stateTarget =
+                    backend.getPartitionedState("target", StringSerializer.INSTANCE, desc);
+            stateTarget.add(50L); // target acc: [50, 1]
+
+            org.apache.flink.runtime.state.internal.InternalAggregatingMergeState<
+                            Integer, String, Long, long[], Long>
+                    internalState =
+                            (org.apache.flink.runtime.state.internal.InternalAggregatingMergeState<
+                                            Integer, String, Long, long[], Long>)
+                                    stateNs1;
+            internalState.mergeNamespaces("target", Arrays.asList("ns1"));
+
+            // merged acc: [30+50, 2+1] = [80, 3] → average = 26
+            assertThat(backend.getPartitionedState("target", StringSerializer.INSTANCE, desc).get())
+                    .isEqualTo(26L);
+            assertThat(backend.getPartitionedState("ns1", StringSerializer.INSTANCE, desc).get())
+                    .isNull();
+        } finally {
+            backend.dispose();
+        }
+    }
+
+    @Test
+    void testAggregatingMergeStateMergeNamespacesWithNullAndMissingSource() throws Exception {
+        RocksDBKeyedStateBackend<Integer> backend =
+                RocksDBTestUtils.builderForTestDefaults(tempDir, IntSerializer.INSTANCE).build();
+
+        try {
+            AggregatingMergeStateDescriptor<Long, long[], Long> desc =
+                    new AggregatingMergeStateDescriptor<>(
+                            "aggSum",
+                            new AverageAggregateFunction(),
+                            LongSerializer.INSTANCE,
+                            LongPrimitiveArraySerializer.INSTANCE);
+
+            backend.setCurrentKey(1);
+            AggregatingMergeState<Long, Long> stateNs1 =
+                    backend.getPartitionedState("ns1", StringSerializer.INSTANCE, desc);
+            stateNs1.add(60L);
+            stateNs1.add(90L); // ns1 acc: [150, 2] → avg = 75
+            // ns2 intentionally has no data; null is passed as a third source
+
+            org.apache.flink.runtime.state.internal.InternalAggregatingMergeState<
+                            Integer, String, Long, long[], Long>
+                    internalState =
+                            (org.apache.flink.runtime.state.internal.InternalAggregatingMergeState<
+                                            Integer, String, Long, long[], Long>)
+                                    stateNs1;
+            internalState.mergeNamespaces("target", Arrays.asList("ns1", null, "ns2"));
+
+            assertThat(backend.getPartitionedState("target", StringSerializer.INSTANCE, desc).get())
+                    .isEqualTo(75L);
         } finally {
             backend.dispose();
         }
@@ -590,8 +752,372 @@ class RocksDBMergeStateTest {
     }
 
     // -------------------------------------------------------------------------
+    // Checkpoint / Savepoint restore tests
+    // -------------------------------------------------------------------------
+
+    /**
+     * Full (non-incremental) checkpoint → restore cycle for both merge-state types.
+     *
+     * <p>Verifies that (a) the restored values are correct, (b) the {@code mergeFunctionBytes} are
+     * present in the restored meta-info (proving the function was serialised into the snapshot),
+     * and (c) further {@code add()} calls after restore still work correctly.
+     */
+    @Test
+    void testFullCheckpointAndRestore() throws Exception {
+        File checkpointDir = new File(tempDir, "checkpoint");
+        checkpointDir.mkdirs();
+
+        ReducingMergeStateDescriptor<Long> reducingDesc =
+                new ReducingMergeStateDescriptor<>("reduceSum", Long::sum, LongSerializer.INSTANCE);
+        AggregatingMergeStateDescriptor<Long, long[], Long> aggDesc =
+                new AggregatingMergeStateDescriptor<>(
+                        "aggAvg",
+                        new AverageAggregateFunction(),
+                        LongSerializer.INSTANCE,
+                        LongPrimitiveArraySerializer.INSTANCE);
+
+        KeyedStateHandle handle;
+        File backendDir1 = new File(tempDir, "backend1");
+        backendDir1.mkdirs();
+        RocksDBKeyedStateBackend<Integer> backend =
+                RocksDBTestUtils.builderForTestDefaults(backendDir1, IntSerializer.INSTANCE)
+                        .build();
+        try {
+            backend.setCurrentKey(1);
+            backend.getPartitionedState(
+                            VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, reducingDesc)
+                    .add(10L);
+            backend.getPartitionedState(
+                            VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, reducingDesc)
+                    .add(20L);
+            backend.getPartitionedState(
+                            VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, aggDesc)
+                    .add(100L);
+            backend.getPartitionedState(
+                            VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, aggDesc)
+                    .add(200L);
+
+            var streamFactory =
+                    new JobManagerCheckpointStorage()
+                            .createCheckpointStorage(new JobID())
+                            .resolveCheckpointStorageLocation(
+                                    1L, CheckpointStorageLocationReference.getDefault());
+
+            RunnableFuture<SnapshotResult<KeyedStateHandle>> snapshotFuture =
+                    backend.snapshot(
+                            1L,
+                            1L,
+                            streamFactory,
+                            CheckpointOptions.forCheckpointWithDefaultLocation());
+            snapshotFuture.run();
+            handle = snapshotFuture.get().getJobManagerOwnedSnapshot();
+            handle.registerSharedStates(new SharedStateRegistryImpl(), 1L);
+        } finally {
+            backend.dispose();
+        }
+
+        // Restore
+        File backendDir2 = new File(tempDir, "backend2");
+        backendDir2.mkdirs();
+        RocksDBKeyedStateBackend<Integer> restored =
+                RocksDBTestUtils.builderForTestDefaults(
+                                backendDir2,
+                                IntSerializer.INSTANCE,
+                                2,
+                                new KeyGroupRange(0, 1),
+                                Collections.singletonList(handle))
+                        .build();
+        try {
+            restored.setCurrentKey(1);
+
+            // Verify restored values
+            assertThat(
+                            restored.getPartitionedState(
+                                            VoidNamespace.INSTANCE,
+                                            VoidNamespaceSerializer.INSTANCE,
+                                            reducingDesc)
+                                    .get())
+                    .isEqualTo(30L);
+            assertThat(
+                            restored.getPartitionedState(
+                                            VoidNamespace.INSTANCE,
+                                            VoidNamespaceSerializer.INSTANCE,
+                                            aggDesc)
+                                    .get())
+                    .isEqualTo(150L);
+
+            // Verify merge function bytes are present in the restored meta-info
+            assertMergeFunctionBytesPresent(restored, reducingDesc.getName());
+            assertMergeFunctionBytesPresent(restored, aggDesc.getName());
+
+            // Verify add() still works after restore
+            restored.getPartitionedState(
+                            VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, reducingDesc)
+                    .add(30L);
+            assertThat(
+                            restored.getPartitionedState(
+                                            VoidNamespace.INSTANCE,
+                                            VoidNamespaceSerializer.INSTANCE,
+                                            reducingDesc)
+                                    .get())
+                    .isEqualTo(60L);
+        } finally {
+            restored.dispose();
+        }
+    }
+
+    /**
+     * Savepoint → restore cycle for both merge-state types.
+     *
+     * <p>Savepoints use a different code path (full re-snapshot without SST file reuse) and a
+     * dedicated {@link SavepointType}. This test verifies that the function bytes survive a
+     * canonical savepoint round-trip.
+     */
+    @Test
+    void testSavepointAndRestore() throws Exception {
+        File checkpointDir = new File(tempDir, "savepoint");
+        checkpointDir.mkdirs();
+
+        ReducingMergeStateDescriptor<Long> reducingDesc =
+                new ReducingMergeStateDescriptor<>("reduceSum", Long::sum, LongSerializer.INSTANCE);
+        AggregatingMergeStateDescriptor<Long, long[], Long> aggDesc =
+                new AggregatingMergeStateDescriptor<>(
+                        "aggAvg",
+                        new AverageAggregateFunction(),
+                        LongSerializer.INSTANCE,
+                        LongPrimitiveArraySerializer.INSTANCE);
+
+        KeyedStateHandle handle;
+        File backendDir1 = new File(tempDir, "sp-backend1");
+        backendDir1.mkdirs();
+        RocksDBKeyedStateBackend<Integer> backend =
+                RocksDBTestUtils.builderForTestDefaults(backendDir1, IntSerializer.INSTANCE)
+                        .build();
+        try {
+            backend.setCurrentKey(1);
+            backend.getPartitionedState(
+                            VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, reducingDesc)
+                    .add(5L);
+            backend.getPartitionedState(
+                            VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, reducingDesc)
+                    .add(15L);
+            backend.getPartitionedState(
+                            VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, aggDesc)
+                    .add(40L);
+            backend.getPartitionedState(
+                            VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, aggDesc)
+                    .add(60L);
+
+            var streamFactory =
+                    new FileSystemCheckpointStorage(checkpointDir.toURI())
+                            .createCheckpointStorage(new JobID())
+                            .resolveCheckpointStorageLocation(
+                                    1L, CheckpointStorageLocationReference.getDefault());
+
+            RunnableFuture<SnapshotResult<KeyedStateHandle>> snapshotFuture =
+                    backend.snapshot(
+                            1L,
+                            1L,
+                            streamFactory,
+                            CheckpointOptions.alignedNoTimeout(
+                                    SavepointType.savepoint(SavepointFormatType.CANONICAL),
+                                    CheckpointStorageLocationReference.getDefault()));
+            snapshotFuture.run();
+            handle = snapshotFuture.get().getJobManagerOwnedSnapshot();
+            handle.registerSharedStates(new SharedStateRegistryImpl(), 1L);
+        } finally {
+            backend.dispose();
+        }
+
+        // Restore
+        File backendDir2 = new File(tempDir, "sp-backend2");
+        backendDir2.mkdirs();
+        RocksDBKeyedStateBackend<Integer> restored =
+                RocksDBTestUtils.builderForTestDefaults(
+                                backendDir2,
+                                IntSerializer.INSTANCE,
+                                2,
+                                new KeyGroupRange(0, 1),
+                                Collections.singletonList(handle))
+                        .build();
+        try {
+            restored.setCurrentKey(1);
+
+            assertThat(
+                            restored.getPartitionedState(
+                                            VoidNamespace.INSTANCE,
+                                            VoidNamespaceSerializer.INSTANCE,
+                                            reducingDesc)
+                                    .get())
+                    .isEqualTo(20L);
+            assertThat(
+                            restored.getPartitionedState(
+                                            VoidNamespace.INSTANCE,
+                                            VoidNamespaceSerializer.INSTANCE,
+                                            aggDesc)
+                                    .get())
+                    .isEqualTo(50L);
+
+            assertMergeFunctionBytesPresent(restored, reducingDesc.getName());
+            assertMergeFunctionBytesPresent(restored, aggDesc.getName());
+
+            // add() must still work after savepoint restore
+            restored.getPartitionedState(
+                            VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, reducingDesc)
+                    .add(10L);
+            assertThat(
+                            restored.getPartitionedState(
+                                            VoidNamespace.INSTANCE,
+                                            VoidNamespaceSerializer.INSTANCE,
+                                            reducingDesc)
+                                    .get())
+                    .isEqualTo(30L);
+        } finally {
+            restored.dispose();
+        }
+    }
+
+    /**
+     * Incremental checkpoint → restore cycle for both merge-state types.
+     *
+     * <p>Incremental checkpoints reuse SST files across checkpoints. When the backend is restored,
+     * RocksDB opens the existing SST files and must apply any pending merge operands using the
+     * correct custom merge operator. This test verifies that the merge operator is reconstructed
+     * correctly so that pending operands are processed right.
+     */
+    @Test
+    void testIncrementalCheckpointAndRestore() throws Exception {
+        File checkpointDir = new File(tempDir, "inc-checkpoint");
+        checkpointDir.mkdirs();
+
+        ReducingMergeStateDescriptor<Long> reducingDesc =
+                new ReducingMergeStateDescriptor<>("reduceSum", Long::sum, LongSerializer.INSTANCE);
+        AggregatingMergeStateDescriptor<Long, long[], Long> aggDesc =
+                new AggregatingMergeStateDescriptor<>(
+                        "aggAvg",
+                        new AverageAggregateFunction(),
+                        LongSerializer.INSTANCE,
+                        LongPrimitiveArraySerializer.INSTANCE);
+
+        KeyedStateHandle handle;
+        File backendDir1 = new File(tempDir, "inc-backend1");
+        backendDir1.mkdirs();
+        RocksDBKeyedStateBackend<Integer> backend =
+                RocksDBTestUtils.builderForTestDefaults(
+                                backendDir1,
+                                IntSerializer.INSTANCE,
+                                2,
+                                new KeyGroupRange(0, 1),
+                                Collections.emptyList())
+                        .setEnableIncrementalCheckpointing(true)
+                        .build();
+        try {
+            var streamFactory =
+                    new FileSystemCheckpointStorage(checkpointDir.toURI())
+                            .createCheckpointStorage(new JobID())
+                            .resolveCheckpointStorageLocation(
+                                    1L, CheckpointStorageLocationReference.getDefault());
+
+            backend.setCurrentKey(1);
+            backend.getPartitionedState(
+                            VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, reducingDesc)
+                    .add(7L);
+            backend.getPartitionedState(
+                            VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, reducingDesc)
+                    .add(3L);
+            backend.getPartitionedState(
+                            VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, aggDesc)
+                    .add(10L);
+            backend.getPartitionedState(
+                            VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, aggDesc)
+                    .add(30L);
+
+            RunnableFuture<SnapshotResult<KeyedStateHandle>> snapshotFuture =
+                    backend.snapshot(
+                            1L,
+                            1L,
+                            streamFactory,
+                            CheckpointOptions.forCheckpointWithDefaultLocation());
+            snapshotFuture.run();
+            SnapshotResult<KeyedStateHandle> snapshotResult = snapshotFuture.get();
+            handle = snapshotResult.getJobManagerOwnedSnapshot();
+            handle.registerSharedStates(new SharedStateRegistryImpl(), 1L);
+            backend.notifyCheckpointComplete(1L);
+        } finally {
+            backend.dispose();
+        }
+
+        // Restore with incremental checkpointing enabled
+        File backendDir2 = new File(tempDir, "inc-backend2");
+        backendDir2.mkdirs();
+        RocksDBKeyedStateBackend<Integer> restored =
+                RocksDBTestUtils.builderForTestDefaults(
+                                backendDir2,
+                                IntSerializer.INSTANCE,
+                                2,
+                                new KeyGroupRange(0, 1),
+                                Collections.singletonList(handle))
+                        .setEnableIncrementalCheckpointing(true)
+                        .build();
+        try {
+            restored.setCurrentKey(1);
+
+            assertThat(
+                            restored.getPartitionedState(
+                                            VoidNamespace.INSTANCE,
+                                            VoidNamespaceSerializer.INSTANCE,
+                                            reducingDesc)
+                                    .get())
+                    .isEqualTo(10L);
+            assertThat(
+                            restored.getPartitionedState(
+                                            VoidNamespace.INSTANCE,
+                                            VoidNamespaceSerializer.INSTANCE,
+                                            aggDesc)
+                                    .get())
+                    .isEqualTo(20L);
+
+            assertMergeFunctionBytesPresent(restored, reducingDesc.getName());
+            assertMergeFunctionBytesPresent(restored, aggDesc.getName());
+
+            // add() must still work after incremental restore
+            restored.getPartitionedState(
+                            VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, reducingDesc)
+                    .add(10L);
+            assertThat(
+                            restored.getPartitionedState(
+                                            VoidNamespace.INSTANCE,
+                                            VoidNamespaceSerializer.INSTANCE,
+                                            reducingDesc)
+                                    .get())
+                    .isEqualTo(20L);
+        } finally {
+            restored.dispose();
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * Asserts that the named state in the backend has {@code mergeFunctionBytes} stored in its
+     * meta-info, confirming the function was serialised into the checkpoint/savepoint.
+     */
+    private static void assertMergeFunctionBytesPresent(
+            RocksDBKeyedStateBackend<?> backend, String stateName) {
+        RocksDbKvStateInfo stateInfo = backend.getKvStateInformation().get(stateName);
+        assertThat(stateInfo).as("State info must exist for: " + stateName).isNotNull();
+        RegisteredStateMetaInfoBase metaInfoBase = stateInfo.metaInfo;
+        assertThat(metaInfoBase)
+                .as("Meta info must be RegisteredKeyValueStateBackendMetaInfo")
+                .isInstanceOf(RegisteredKeyValueStateBackendMetaInfo.class);
+        RegisteredKeyValueStateBackendMetaInfo<?, ?> kvMetaInfo =
+                (RegisteredKeyValueStateBackendMetaInfo<?, ?>) metaInfoBase;
+        assertThat(kvMetaInfo.getMergeFunctionBytes())
+                .as("mergeFunctionBytes must be non-null for state: " + stateName)
+                .isNotNull();
+    }
 
     /** Average aggregate function: IN = Long, ACC = long[]{sum, count}, OUT = Long. */
     private static class AverageAggregateFunction implements AggregateFunction<Long, long[], Long> {

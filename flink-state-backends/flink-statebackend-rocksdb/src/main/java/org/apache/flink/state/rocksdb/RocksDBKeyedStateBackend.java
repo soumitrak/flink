@@ -72,6 +72,7 @@ import org.apache.flink.state.rocksdb.ttl.RocksDbTtlCompactFiltersManager;
 import org.apache.flink.util.FileUtils;
 import org.apache.flink.util.FlinkRuntimeException;
 import org.apache.flink.util.IOUtils;
+import org.apache.flink.util.InstantiationUtil;
 import org.apache.flink.util.Preconditions;
 import org.apache.flink.util.ResourceGuard;
 import org.apache.flink.util.StateMigrationException;
@@ -752,6 +753,14 @@ public class RocksDBKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
         checkpointSnapshotStrategy.notifyCheckpointAborted(checkpointId);
     }
 
+    /**
+     * Creates a {@link RocksDBAggregatingMergeOperator} from the given descriptor and accumulator
+     * serializer. The operator is registered on the column family so that RocksDB invokes it during
+     * compaction and on reads.
+     *
+     * @param mergeDesc the state descriptor carrying the aggregate function and input serializer
+     * @param accSerializer serializer for the accumulator type stored in RocksDB
+     */
     private static <IN, ACC, OUT>
             RocksDBAggregatingMergeOperator<IN, ACC, OUT> createAggregatingMergeOperator(
                     AggregatingMergeStateDescriptor<IN, ACC, OUT> mergeDesc,
@@ -806,13 +815,49 @@ public class RocksDBKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
             kvStateInformation.put(stateDesc.getName(), newRocksStateInfo);
             sstMergeManager.register(newRocksStateInfo);
         } else {
+            // Serialize the merge function for REDUCING_MERGE / AGGREGATING_MERGE so that the
+            // correct merge operator can be reconstructed during checkpoint / savepoint restore.
+            byte[] mergeFunctionBytes = null;
+            TypeSerializer<?> mergeInputSerializer = null;
+            if (stateDesc instanceof ReducingMergeStateDescriptor) {
+                try {
+                    mergeFunctionBytes =
+                            InstantiationUtil.serializeObject(
+                                    ((ReducingMergeStateDescriptor<SV>) stateDesc)
+                                            .getReduceFunction());
+                } catch (IOException e) {
+                    throw new FlinkRuntimeException(
+                            "Cannot serialize ReduceFunction for state '"
+                                    + stateDesc.getName()
+                                    + "'",
+                            e);
+                }
+            } else if (stateDesc instanceof AggregatingMergeStateDescriptor) {
+                @SuppressWarnings("unchecked")
+                AggregatingMergeStateDescriptor<?, SV, ?> aggDesc =
+                        (AggregatingMergeStateDescriptor<?, SV, ?>) stateDesc;
+                try {
+                    mergeFunctionBytes =
+                            InstantiationUtil.serializeObject(aggDesc.getAggregateFunction());
+                } catch (IOException e) {
+                    throw new FlinkRuntimeException(
+                            "Cannot serialize AggregateFunction for state '"
+                                    + stateDesc.getName()
+                                    + "'",
+                            e);
+                }
+                mergeInputSerializer = aggDesc.getInputSerializer();
+            }
+
             newMetaInfo =
                     new RegisteredKeyValueStateBackendMetaInfo<>(
                             stateDesc.getType(),
                             stateDesc.getName(),
                             namespaceSerializer,
                             stateSerializer,
-                            StateSnapshotTransformFactory.noTransform());
+                            StateSnapshotTransformFactory.noTransform(),
+                            mergeFunctionBytes,
+                            mergeInputSerializer);
 
             newMetaInfo =
                     allowFutureMetadataUpdates

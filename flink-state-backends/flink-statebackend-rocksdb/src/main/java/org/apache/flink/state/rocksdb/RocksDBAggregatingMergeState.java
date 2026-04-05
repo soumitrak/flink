@@ -83,6 +83,13 @@ class RocksDBAggregatingMergeState<K, N, IN, ACC, R>
         return valueSerializer;
     }
 
+    /**
+     * Returns the aggregated result for the current key and namespace. Reads the accumulated value
+     * from RocksDB (which may trigger a merge of any pending operands) and passes it through {@link
+     * AggregateFunction#getResult}.
+     *
+     * @return the aggregated result, or {@code null} if no value has been added yet
+     */
     @Override
     public R get() throws IOException, RocksDBException {
         ACC accumulator = getInternal();
@@ -108,6 +115,12 @@ class RocksDBAggregatingMergeState<K, N, IN, ACC, R>
                 dataOutputView.getCopyOfBuffer());
     }
 
+    /**
+     * Merges the accumulated values from all {@code sources} namespaces into the {@code target}
+     * namespace. Each source accumulator is read, deleted, and folded into a combined accumulator
+     * using {@link AggregateFunction#merge}. The result is then merged with any existing target
+     * accumulator and written back under the target key.
+     */
     @Override
     public void mergeNamespaces(N target, Collection<N> sources)
             throws IOException, RocksDBException {
@@ -149,18 +162,24 @@ class RocksDBAggregatingMergeState<K, N, IN, ACC, R>
         }
     }
 
+    /** Updates the aggregate function used to fold operands; called on state re-registration. */
     RocksDBAggregatingMergeState<K, N, IN, ACC, R> setAggFunction(
             AggregateFunction<IN, ACC, R> aggFunction) {
         this.aggFunction = aggFunction;
         return this;
     }
 
+    /** Updates the input serializer; called on state re-registration after a schema upgrade. */
     RocksDBAggregatingMergeState<K, N, IN, ACC, R> setInputSerializer(
             TypeSerializer<IN> inputSerializer) {
         this.inputSerializer = inputSerializer;
         return this;
     }
 
+    /**
+     * Factory method called by the RocksDB state backend to create a new instance backed by the
+     * provided column family.
+     */
     @SuppressWarnings({"unchecked", "rawtypes"})
     static <K, N, SV, S extends State, IS extends S> IS create(
             StateDescriptor<S, SV> stateDesc,
@@ -179,6 +198,12 @@ class RocksDBAggregatingMergeState<K, N, IN, ACC, R>
                         backend);
     }
 
+    /**
+     * Update method called by the RocksDB state backend when an existing state instance is
+     * re-registered, e.g., after a serializer upgrade. Updates the aggregate function, input
+     * serializer, namespace serializer, value serializer, default value, and column family handle
+     * on the existing state object in-place rather than creating a new one.
+     */
     @SuppressWarnings({"unchecked", "rawtypes"})
     static <K, N, SV, S extends State, IS extends S> IS update(
             StateDescriptor<S, SV> stateDesc,

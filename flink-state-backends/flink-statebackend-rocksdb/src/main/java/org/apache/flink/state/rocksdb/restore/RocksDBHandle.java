@@ -20,6 +20,7 @@ package org.apache.flink.state.rocksdb.restore;
 
 import org.apache.flink.core.fs.ICloseableRegistry;
 import org.apache.flink.metrics.MetricGroup;
+import org.apache.flink.runtime.state.RegisteredKeyValueStateBackendMetaInfo;
 import org.apache.flink.runtime.state.RegisteredStateMetaInfoBase;
 import org.apache.flink.runtime.state.metainfo.StateMetaInfoSnapshot;
 import org.apache.flink.state.rocksdb.RocksDBKeyedStateBackend.RocksDbKvStateInfo;
@@ -31,6 +32,7 @@ import org.apache.flink.util.FileUtils;
 import org.apache.flink.util.IOUtils;
 import org.apache.flink.util.Preconditions;
 
+import org.rocksdb.AbstractMergeOperator;
 import org.rocksdb.ColumnFamilyDescriptor;
 import org.rocksdb.ColumnFamilyHandle;
 import org.rocksdb.ColumnFamilyOptions;
@@ -73,6 +75,7 @@ class RocksDBHandle implements AutoCloseable {
     private List<ColumnFamilyDescriptor> columnFamilyDescriptors;
     private final RocksDBNativeMetricOptions nativeMetricOptions;
     private final MetricGroup metricGroup;
+    private final ClassLoader userCodeClassLoader;
     // Current places to set compact filter into column family options:
     // - Incremental restore
     //   - restore with rescaling
@@ -101,6 +104,28 @@ class RocksDBHandle implements AutoCloseable {
             MetricGroup metricGroup,
             @Nonnull RocksDbTtlCompactFiltersManager ttlCompactFiltersManager,
             Long writeBufferManagerCapacity) {
+        this(
+                kvStateInformation,
+                instanceRocksDBPath,
+                dbOptions,
+                columnFamilyOptionsFactory,
+                nativeMetricOptions,
+                metricGroup,
+                ttlCompactFiltersManager,
+                writeBufferManagerCapacity,
+                Thread.currentThread().getContextClassLoader());
+    }
+
+    protected RocksDBHandle(
+            Map<String, RocksDbKvStateInfo> kvStateInformation,
+            File instanceRocksDBPath,
+            DBOptions dbOptions,
+            Function<String, ColumnFamilyOptions> columnFamilyOptionsFactory,
+            RocksDBNativeMetricOptions nativeMetricOptions,
+            MetricGroup metricGroup,
+            @Nonnull RocksDbTtlCompactFiltersManager ttlCompactFiltersManager,
+            Long writeBufferManagerCapacity,
+            @Nonnull ClassLoader userCodeClassLoader) {
         this.kvStateInformation = kvStateInformation;
         this.dbPath = instanceRocksDBPath.getAbsolutePath();
         this.dbOptions = dbOptions;
@@ -111,6 +136,7 @@ class RocksDBHandle implements AutoCloseable {
         this.columnFamilyHandles = new ArrayList<>(1);
         this.columnFamilyDescriptors = Collections.emptyList();
         this.writeBufferManagerCapacity = writeBufferManagerCapacity;
+        this.userCodeClassLoader = userCodeClassLoader;
     }
 
     void openDB() throws IOException {
@@ -169,14 +195,35 @@ class RocksDBHandle implements AutoCloseable {
             RegisteredStateMetaInfoBase stateMetaInfo =
                     RegisteredStateMetaInfoBase.fromMetaInfoSnapshot(stateMetaInfoSnapshot);
             if (columnFamilyHandle == null) {
-                registeredStateMetaInfoEntry =
-                        RocksDBOperationUtils.createStateInfo(
-                                stateMetaInfo,
-                                db,
-                                columnFamilyOptionsFactory,
-                                ttlCompactFiltersManager,
-                                writeBufferManagerCapacity,
-                                cancelStreamRegistryForRestore);
+                // For merge-operator-backed states, recreate the column family with the correct
+                // merge operator so that pending merge operands in SST files are applied correctly.
+                AbstractMergeOperator mergeOperator =
+                        stateMetaInfo instanceof RegisteredKeyValueStateBackendMetaInfo
+                                ? RocksDBOperationUtils.tryCreateMergeOperator(
+                                        (RegisteredKeyValueStateBackendMetaInfo<?, ?>)
+                                                stateMetaInfo,
+                                        userCodeClassLoader)
+                                : null;
+                if (mergeOperator != null) {
+                    registeredStateMetaInfoEntry =
+                            RocksDBOperationUtils.createStateInfoWithMergeOperator(
+                                    stateMetaInfo,
+                                    db,
+                                    columnFamilyOptionsFactory,
+                                    mergeOperator,
+                                    ttlCompactFiltersManager,
+                                    writeBufferManagerCapacity,
+                                    cancelStreamRegistryForRestore);
+                } else {
+                    registeredStateMetaInfoEntry =
+                            RocksDBOperationUtils.createStateInfo(
+                                    stateMetaInfo,
+                                    db,
+                                    columnFamilyOptionsFactory,
+                                    ttlCompactFiltersManager,
+                                    writeBufferManagerCapacity,
+                                    cancelStreamRegistryForRestore);
+                }
             } else {
                 registeredStateMetaInfoEntry =
                         new RocksDbKvStateInfo(columnFamilyHandle, stateMetaInfo);
@@ -213,15 +260,38 @@ class RocksDBHandle implements AutoCloseable {
                 !kvStateInformation.containsKey(stateMetaInfo.getName()),
                 "Error: stateMetaInfo.name is not unique:" + stateMetaInfo.getName());
 
-        RocksDbKvStateInfo stateInfo =
-                RocksDBOperationUtils.createStateInfo(
-                        stateMetaInfo,
-                        db,
-                        columnFamilyOptionsFactory,
-                        ttlCompactFiltersManager,
-                        writeBufferManagerCapacity,
-                        cfMetaDataList,
-                        cancelStreamRegistryForRestore);
+        // For merge-operator-backed states, import the SST files into a column family that already
+        // has the correct merge operator set, so that any pending merge operands are applied
+        // correctly during reads / compaction.
+        AbstractMergeOperator mergeOperator =
+                stateMetaInfo instanceof RegisteredKeyValueStateBackendMetaInfo
+                        ? RocksDBOperationUtils.tryCreateMergeOperator(
+                                (RegisteredKeyValueStateBackendMetaInfo<?, ?>) stateMetaInfo,
+                                userCodeClassLoader)
+                        : null;
+
+        RocksDbKvStateInfo stateInfo;
+        if (mergeOperator != null) {
+            stateInfo =
+                    RocksDBOperationUtils.createStateInfoWithMergeOperator(
+                            stateMetaInfo,
+                            db,
+                            columnFamilyOptionsFactory,
+                            mergeOperator,
+                            ttlCompactFiltersManager,
+                            writeBufferManagerCapacity,
+                            cancelStreamRegistryForRestore);
+        } else {
+            stateInfo =
+                    RocksDBOperationUtils.createStateInfo(
+                            stateMetaInfo,
+                            db,
+                            columnFamilyOptionsFactory,
+                            ttlCompactFiltersManager,
+                            writeBufferManagerCapacity,
+                            cfMetaDataList,
+                            cancelStreamRegistryForRestore);
+        }
 
         RocksDBOperationUtils.registerKvStateInformation(
                 kvStateInformation, nativeMetricMonitor, stateMetaInfo.getName(), stateInfo);

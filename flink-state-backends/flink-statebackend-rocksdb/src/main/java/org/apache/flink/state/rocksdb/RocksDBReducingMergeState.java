@@ -76,6 +76,12 @@ class RocksDBReducingMergeState<K, N, V> extends AbstractRocksDBAppendingState<K
         return valueSerializer;
     }
 
+    /**
+     * Returns the reduced value for the current key and namespace. Reading from RocksDB will
+     * trigger a full merge of any pending operands via {@link RocksDBReducingMergeOperator}.
+     *
+     * @return the reduced value, or {@code null} if no value has been added yet
+     */
     @Override
     public V get() throws IOException, RocksDBException {
         return getInternal();
@@ -94,6 +100,11 @@ class RocksDBReducingMergeState<K, N, V> extends AbstractRocksDBAppendingState<K
                 serializeValue(value));
     }
 
+    /**
+     * Merges the values from all {@code sources} namespaces into the {@code target} namespace.
+     * Each source value is read, deleted, and folded into a running result using the reduce
+     * function. The result is then reduced with any existing target value and written back.
+     */
     @Override
     public void mergeNamespaces(N target, Collection<N> sources) throws Exception {
         if (sources == null || sources.isEmpty()) {
@@ -134,11 +145,16 @@ class RocksDBReducingMergeState<K, N, V> extends AbstractRocksDBAppendingState<K
         }
     }
 
+    /** Updates the reduce function; called on state re-registration. */
     RocksDBReducingMergeState<K, N, V> setReduceFunction(ReduceFunction<V> reduceFunction) {
         this.reduceFunction = reduceFunction;
         return this;
     }
 
+    /**
+     * Factory method called by the RocksDB state backend to create a new instance backed by the
+     * provided column family.
+     */
     @SuppressWarnings("unchecked")
     static <K, N, SV, S extends State, IS extends S> IS create(
             StateDescriptor<S, SV> stateDesc,
@@ -155,6 +171,11 @@ class RocksDBReducingMergeState<K, N, V> extends AbstractRocksDBAppendingState<K
                         backend);
     }
 
+    /**
+     * Update method called by the RocksDB state backend when an existing state instance is
+     * re-registered. Updates the reduce function, namespace serializer, value serializer, default
+     * value, and column family handle on the existing object in-place.
+     */
     @SuppressWarnings("unchecked")
     static <K, N, SV, S extends State, IS extends S> IS update(
             StateDescriptor<S, SV> stateDesc,
@@ -166,6 +187,7 @@ class RocksDBReducingMergeState<K, N, V> extends AbstractRocksDBAppendingState<K
                         .setReduceFunction(
                                 ((ReducingMergeStateDescriptor<SV>) stateDesc).getReduceFunction())
                         .setNamespaceSerializer(registerResult.f1.getNamespaceSerializer())
+                        .setValueSerializer(registerResult.f1.getStateSerializer())
                         .setDefaultValue(stateDesc.getDefaultValue())
                         .setColumnFamily(registerResult.f0);
     }

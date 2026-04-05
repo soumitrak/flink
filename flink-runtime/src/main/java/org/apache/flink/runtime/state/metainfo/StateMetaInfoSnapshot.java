@@ -81,7 +81,9 @@ public class StateMetaInfoSnapshot {
         KEY_SERIALIZER,
         NAMESPACE_SERIALIZER,
         VALUE_SERIALIZER,
-        USER_KEY_SERIALIZER
+        USER_KEY_SERIALIZER,
+        /** Input-type serializer for {@code AggregatingMergeState} column families. */
+        MERGE_INPUT_SERIALIZER
     }
 
     /** The name of the state. */
@@ -99,6 +101,12 @@ public class StateMetaInfoSnapshot {
     // properly implemented.
     /** The serializers used by the state. */
     @Nonnull private final Map<String, TypeSerializer<?>> serializers;
+
+    /**
+     * Binary (byte[]) options that cannot be represented as plain strings. Used to store serialized
+     * ReduceFunction / AggregateFunction bytes for merge-operator-backed states.
+     */
+    @Nonnull private final Map<String, byte[]> binaryOptions;
 
     public StateMetaInfoSnapshot(
             @Nonnull String name,
@@ -121,11 +129,22 @@ public class StateMetaInfoSnapshot {
             @Nonnull Map<String, String> options,
             @Nonnull Map<String, TypeSerializerSnapshot<?>> serializerSnapshots,
             @Nonnull Map<String, TypeSerializer<?>> serializers) {
+        this(name, backendStateType, options, serializerSnapshots, serializers, new HashMap<>());
+    }
+
+    public StateMetaInfoSnapshot(
+            @Nonnull String name,
+            @Nonnull BackendStateType backendStateType,
+            @Nonnull Map<String, String> options,
+            @Nonnull Map<String, TypeSerializerSnapshot<?>> serializerSnapshots,
+            @Nonnull Map<String, TypeSerializer<?>> serializers,
+            @Nonnull Map<String, byte[]> binaryOptions) {
         this.name = name;
         this.backendStateType = backendStateType;
         this.options = options;
         this.serializerSnapshots = serializerSnapshots;
         this.serializers = serializers;
+        this.binaryOptions = binaryOptions;
     }
 
     @Nonnull
@@ -172,5 +191,16 @@ public class StateMetaInfoSnapshot {
     @Nullable
     public TypeSerializer<?> getTypeSerializer(@Nonnull String key) {
         return serializers.get(key);
+    }
+
+    /** Returns the binary option stored under the given key, or {@code null} if absent. */
+    @Nullable
+    public byte[] getBinaryOption(@Nonnull String key) {
+        return binaryOptions.get(key);
+    }
+
+    @Nonnull
+    public Map<String, byte[]> getBinaryOptionsImmutable() {
+        return Collections.unmodifiableMap(binaryOptions);
     }
 }

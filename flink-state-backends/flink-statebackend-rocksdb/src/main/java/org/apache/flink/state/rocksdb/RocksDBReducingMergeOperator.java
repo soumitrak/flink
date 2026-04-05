@@ -23,6 +23,8 @@ import org.apache.flink.core.memory.DataInputDeserializer;
 import org.apache.flink.core.memory.DataOutputSerializer;
 
 import org.rocksdb.AbstractMergeOperator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
 
@@ -41,9 +43,17 @@ import java.nio.ByteBuffer;
  */
 class RocksDBReducingMergeOperator<V> extends AbstractMergeOperator {
 
+    private static final Logger LOG = LoggerFactory.getLogger(RocksDBReducingMergeOperator.class);
+
     private final ReduceFunction<V> reduceFunction;
     private final TypeSerializer<V> valueSerializer;
 
+    /**
+     * Creates a new operator with the given reduce function and value serializer.
+     *
+     * @param reduceFunction the reduce function applied during merge
+     * @param valueSerializer serializer for state values ({@code V})
+     */
     RocksDBReducingMergeOperator(
             ReduceFunction<V> reduceFunction, TypeSerializer<V> valueSerializer) {
         super();
@@ -56,6 +66,19 @@ class RocksDBReducingMergeOperator<V> extends AbstractMergeOperator {
         return "RocksDBReducingMergeOperator";
     }
 
+    /**
+     * Folds the existing base value and all pending operands into a single value using the reduce
+     * function.
+     *
+     * <p>Values are processed left-to-right: the existing base (if present) is taken as the initial
+     * accumulator, then each operand is reduced into it. If neither a base value nor any operands
+     * are present, {@code null} is returned.
+     *
+     * @param key the RocksDB key (unused)
+     * @param existing the current base value (serialized {@code V}), or {@code null} if absent
+     * @param operands the pending merge operands (each a serialized {@code V})
+     * @return the serialized reduced value, or {@code null} if there is nothing to reduce
+     */
     @Override
     public byte[] fullMerge(ByteBuffer key, ByteBuffer existing, ByteBuffer[] operands) {
         try {
@@ -81,6 +104,16 @@ class RocksDBReducingMergeOperator<V> extends AbstractMergeOperator {
         }
     }
 
+    /**
+     * Pre-reduces two adjacent operands during compaction. This allows RocksDB to compact the merge
+     * operand list incrementally without waiting for a full merge. On failure, returns {@code null}
+     * to defer reduction to the next {@link #fullMerge} call.
+     *
+     * @param key the RocksDB key (unused)
+     * @param left the left operand (serialized {@code V})
+     * @param right the right operand (serialized {@code V})
+     * @return the serialized reduced value, or {@code null} if partial merge fails
+     */
     @Override
     public byte[] partialMerge(ByteBuffer key, ByteBuffer left, ByteBuffer right) {
         try {

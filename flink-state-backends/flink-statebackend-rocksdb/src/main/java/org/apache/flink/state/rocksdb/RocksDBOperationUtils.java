@@ -17,15 +17,20 @@
 
 package org.apache.flink.state.rocksdb;
 
+import org.apache.flink.api.common.functions.AggregateFunction;
+import org.apache.flink.api.common.functions.ReduceFunction;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.configuration.ConfigConstants;
 import org.apache.flink.core.fs.ICloseableRegistry;
 import org.apache.flink.runtime.execution.CancelTaskException;
 import org.apache.flink.runtime.execution.Environment;
 import org.apache.flink.runtime.memory.OpaqueMemoryResource;
+import org.apache.flink.runtime.state.RegisteredKeyValueStateBackendMetaInfo;
 import org.apache.flink.runtime.state.RegisteredStateMetaInfoBase;
 import org.apache.flink.state.rocksdb.ttl.RocksDbTtlCompactFiltersManager;
 import org.apache.flink.util.FlinkRuntimeException;
 import org.apache.flink.util.IOUtils;
+import org.apache.flink.util.InstantiationUtil;
 import org.apache.flink.util.OperatingSystem;
 import org.apache.flink.util.Preconditions;
 
@@ -329,6 +334,90 @@ public class RocksDBOperationUtils {
             IOUtils.closeQuietly(columnFamilyDescriptor.getOptions());
             throw new FlinkRuntimeException(
                     "Error creating ColumnFamilyHandle with custom merge operator.", ex);
+        }
+    }
+
+    /**
+     * Creates a {@link ColumnFamilyDescriptor} with a custom Java merge operator instead of the
+     * default string-append operator. Used when reconstructing column family descriptors for
+     * merge-operator-backed states during incremental checkpoint restore (before RocksDB is
+     * opened).
+     */
+    public static ColumnFamilyDescriptor createColumnFamilyDescriptorWithMergeOperator(
+            RegisteredStateMetaInfoBase metaInfoBase,
+            Function<String, ColumnFamilyOptions> columnFamilyOptionsFactory,
+            AbstractMergeOperator mergeOperator,
+            @Nullable RocksDbTtlCompactFiltersManager ttlCompactFiltersManager,
+            @Nullable Long writeBufferManagerCapacity) {
+
+        byte[] nameBytes = metaInfoBase.getName().getBytes(ConfigConstants.DEFAULT_CHARSET);
+        Preconditions.checkState(
+                !Arrays.equals(RocksDB.DEFAULT_COLUMN_FAMILY, nameBytes),
+                "The chosen state name 'default' collides with the name of the default column family!");
+
+        ColumnFamilyOptions options =
+                columnFamilyOptionsFactory
+                        .apply(metaInfoBase.getName())
+                        .setMergeOperator(mergeOperator);
+
+        if (ttlCompactFiltersManager != null) {
+            ttlCompactFiltersManager.setAndRegisterCompactFilterIfStateTtl(metaInfoBase, options);
+        }
+
+        if (writeBufferManagerCapacity != null) {
+            sanityCheckArenaBlockSize(
+                    options.writeBufferSize(),
+                    options.arenaBlockSize(),
+                    writeBufferManagerCapacity);
+        }
+
+        return new ColumnFamilyDescriptor(nameBytes, options);
+    }
+
+    /**
+     * Attempts to reconstruct an {@link AbstractMergeOperator} from the serialized function bytes
+     * stored in the given meta info. Returns {@code null} if the meta info does not contain merge
+     * function bytes (e.g. for non-merge states or old-format snapshots).
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    @Nullable
+    public static AbstractMergeOperator tryCreateMergeOperator(
+            RegisteredKeyValueStateBackendMetaInfo<?, ?> metaInfo,
+            ClassLoader userCodeClassLoader) {
+
+        byte[] functionBytes = metaInfo.getMergeFunctionBytes();
+        if (functionBytes == null) {
+            return null;
+        }
+
+        try {
+            switch (metaInfo.getStateType()) {
+                case REDUCING_MERGE:
+                    ReduceFunction<?> reduceFunction =
+                            InstantiationUtil.deserializeObject(functionBytes, userCodeClassLoader);
+                    return new RocksDBReducingMergeOperator<>(
+                            (ReduceFunction) reduceFunction,
+                            (TypeSerializer) metaInfo.getStateSerializer());
+
+                case AGGREGATING_MERGE:
+                    AggregateFunction<?, ?, ?> aggFunction =
+                            InstantiationUtil.deserializeObject(functionBytes, userCodeClassLoader);
+                    TypeSerializer<?> inputSerializer = metaInfo.getMergeInputSerializer();
+                    if (inputSerializer == null) {
+                        return null;
+                    }
+                    return new RocksDBAggregatingMergeOperator<>(
+                            (AggregateFunction) aggFunction,
+                            (TypeSerializer) inputSerializer,
+                            (TypeSerializer) metaInfo.getStateSerializer());
+
+                default:
+                    return null;
+            }
+        } catch (Exception e) {
+            throw new FlinkRuntimeException(
+                    "Failed to reconstruct merge operator for state '" + metaInfo.getName() + "'",
+                    e);
         }
     }
 

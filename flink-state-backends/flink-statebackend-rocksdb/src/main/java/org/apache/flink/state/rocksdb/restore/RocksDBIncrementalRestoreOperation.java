@@ -187,7 +187,8 @@ public class RocksDBIncrementalRestoreOperation<K> implements RocksDBRestoreOper
                         nativeMetricOptions,
                         metricGroup,
                         ttlCompactFiltersManager,
-                        writeBufferManagerCapacity);
+                        writeBufferManagerCapacity,
+                        userCodeClassLoader);
         this.operatorIdentifier = operatorIdentifier;
         this.restoredSstFiles = new TreeMap<>();
         this.lastCompletedCheckpointId = -1L;
@@ -558,7 +559,8 @@ public class RocksDBIncrementalRestoreOperation<K> implements RocksDBRestoreOper
                             keyGroupPrefixBytes,
                             keyGroupRange,
                             operatorIdentifier,
-                            index)) {
+                            index,
+                            userCodeClassLoader)) {
 
                 Either<KeyGroupRange, IncrementalLocalKeyedStateHandle> result =
                         helper.tryDistribute(exportCfBasePath, exportedColumnFamiliesOut);
@@ -718,7 +720,8 @@ public class RocksDBIncrementalRestoreOperation<K> implements RocksDBRestoreOper
                         rocksHandle.getColumnFamilyOptionsFactory(),
                         rocksHandle.getTtlCompactFiltersManager(),
                         rocksHandle.getWriteBufferManagerCapacity(),
-                        true),
+                        true,
+                        userCodeClassLoader),
                 stateMetaInfoSnapshots,
                 restoreSourcePath,
                 cancelStreamRegistryForRestore);
@@ -791,7 +794,8 @@ public class RocksDBIncrementalRestoreOperation<K> implements RocksDBRestoreOper
                                 rocksHandle.getColumnFamilyOptionsFactory(),
                                 rocksHandle.getDbOptions(),
                                 rocksHandle.getTtlCompactFiltersManager(),
-                                rocksHandle.getWriteBufferManagerCapacity())) {
+                                rocksHandle.getWriteBufferManagerCapacity(),
+                                userCodeClassLoader)) {
                     copyTempDbIntoBaseDb(
                             restoredDbInstance,
                             writeBatchWrapper,

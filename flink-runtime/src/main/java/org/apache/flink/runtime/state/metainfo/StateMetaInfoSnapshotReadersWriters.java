@@ -27,6 +27,7 @@ import org.apache.flink.util.CollectionUtil;
 import javax.annotation.Nonnull;
 
 import java.io.IOException;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -43,8 +44,9 @@ public class StateMetaInfoSnapshotReadersWriters {
     /**
      * Current version for the serialization format of {@link StateMetaInfoSnapshotReadersWriters}.
      * - v6: since Flink 1.7.x
+     * - v8: adds binaryOptions map for merge-operator function bytes
      */
-    public static final int CURRENT_STATE_META_INFO_SNAPSHOT_VERSION = 7;
+    public static final int CURRENT_STATE_META_INFO_SNAPSHOT_VERSION = 8;
 
     /** Returns the writer for {@link StateMetaInfoSnapshot}. */
     @Nonnull
@@ -74,6 +76,10 @@ public class StateMetaInfoSnapshotReadersWriters {
                             "No longer supported version [%d]. Please upgrade first to Flink 1.16. ",
                             readVersion));
         }
+        if (readVersion < 8) {
+            // versions 6 and 7 did not have binaryOptions; return empty map on read
+            return LegacyReaderImpl.INSTANCE;
+        }
         return CurrentReaderImpl.INSTANCE;
     }
 
@@ -82,7 +88,7 @@ public class StateMetaInfoSnapshotReadersWriters {
     // ---------------------------------------------------------------------------------
 
     /**
-     * Implementation of {@link StateMetaInfoWriter} for current implementation. The serialization
+     * Implementation of {@link StateMetaInfoWriter} for the current version (v8). The serialization
      * format is as follows:
      *
      * <ul>
@@ -92,6 +98,8 @@ public class StateMetaInfoSnapshotReadersWriters {
      *       pairs (String, String)
      *   <li>4. Serializer configuration map, consisting of the map size (int) followed by the key
      *       value pairs (String, TypeSerializerSnapshot)
+     *   <li>5. Binary options map, consisting of the map size (int) followed by the key (String)
+     *       and value (int length + bytes)
      * </ul>
      */
     static class CurrentWriterImpl implements StateMetaInfoWriter {
@@ -105,6 +113,7 @@ public class StateMetaInfoSnapshotReadersWriters {
             final Map<String, String> optionsMap = snapshot.getOptionsImmutable();
             final Map<String, TypeSerializerSnapshot<?>> serializerConfigSnapshotsMap =
                     snapshot.getSerializerSnapshotsImmutable();
+            final Map<String, byte[]> binaryOptionsMap = snapshot.getBinaryOptionsImmutable();
 
             outputView.writeUTF(snapshot.getName());
             outputView.writeInt(snapshot.getBackendStateType().ordinal());
@@ -117,18 +126,66 @@ public class StateMetaInfoSnapshotReadersWriters {
             outputView.writeInt(serializerConfigSnapshotsMap.size());
             for (Map.Entry<String, TypeSerializerSnapshot<?>> entry :
                     serializerConfigSnapshotsMap.entrySet()) {
-                final String key = entry.getKey();
                 outputView.writeUTF(entry.getKey());
-
                 TypeSerializerSnapshotSerializationUtil.writeSerializerSnapshot(
                         outputView, (TypeSerializerSnapshot) entry.getValue());
+            }
+
+            outputView.writeInt(binaryOptionsMap.size());
+            for (Map.Entry<String, byte[]> entry : binaryOptionsMap.entrySet()) {
+                outputView.writeUTF(entry.getKey());
+                outputView.writeInt(entry.getValue().length);
+                outputView.write(entry.getValue());
             }
         }
     }
 
+    /** Reader for snapshots written in v6 / v7 format (no binaryOptions field). */
+    static class LegacyReaderImpl implements StateMetaInfoReader {
+
+        private static final LegacyReaderImpl INSTANCE = new LegacyReaderImpl();
+
+        @Nonnull
+        @Override
+        public StateMetaInfoSnapshot readStateMetaInfoSnapshot(
+                @Nonnull DataInputView inputView, @Nonnull ClassLoader userCodeClassLoader)
+                throws IOException {
+
+            final String stateName = inputView.readUTF();
+            final StateMetaInfoSnapshot.BackendStateType stateType =
+                    StateMetaInfoSnapshot.BackendStateType.values()[inputView.readInt()];
+            final int numOptions = inputView.readInt();
+            HashMap<String, String> optionsMap =
+                    CollectionUtil.newHashMapWithExpectedSize(numOptions);
+            for (int i = 0; i < numOptions; ++i) {
+                String key = inputView.readUTF();
+                String value = inputView.readUTF();
+                optionsMap.put(key, value);
+            }
+
+            final int numSerializerConfigSnapshots = inputView.readInt();
+            final HashMap<String, TypeSerializerSnapshot<?>> serializerConfigsMap =
+                    CollectionUtil.newHashMapWithExpectedSize(numSerializerConfigSnapshots);
+            for (int i = 0; i < numSerializerConfigSnapshots; ++i) {
+                serializerConfigsMap.put(
+                        inputView.readUTF(),
+                        TypeSerializerSnapshotSerializationUtil.readSerializerSnapshot(
+                                inputView, userCodeClassLoader));
+            }
+
+            return new StateMetaInfoSnapshot(
+                    stateName,
+                    stateType,
+                    optionsMap,
+                    serializerConfigsMap,
+                    new HashMap<>(),
+                    Collections.emptyMap());
+        }
+    }
+
     /**
-     * Implementation of {@link StateMetaInfoReader} for the current version and generic for all
-     * state types.
+     * Implementation of {@link StateMetaInfoReader} for v8 (current version), generic for all state
+     * types.
      */
     static class CurrentReaderImpl implements StateMetaInfoReader {
 
@@ -155,7 +212,6 @@ public class StateMetaInfoSnapshotReadersWriters {
             final int numSerializerConfigSnapshots = inputView.readInt();
             final HashMap<String, TypeSerializerSnapshot<?>> serializerConfigsMap =
                     CollectionUtil.newHashMapWithExpectedSize(numSerializerConfigSnapshots);
-
             for (int i = 0; i < numSerializerConfigSnapshots; ++i) {
                 serializerConfigsMap.put(
                         inputView.readUTF(),
@@ -163,8 +219,24 @@ public class StateMetaInfoSnapshotReadersWriters {
                                 inputView, userCodeClassLoader));
             }
 
+            final int numBinaryOptions = inputView.readInt();
+            final HashMap<String, byte[]> binaryOptionsMap =
+                    CollectionUtil.newHashMapWithExpectedSize(numBinaryOptions);
+            for (int i = 0; i < numBinaryOptions; ++i) {
+                String key = inputView.readUTF();
+                int len = inputView.readInt();
+                byte[] value = new byte[len];
+                inputView.readFully(value);
+                binaryOptionsMap.put(key, value);
+            }
+
             return new StateMetaInfoSnapshot(
-                    stateName, stateType, optionsMap, serializerConfigsMap);
+                    stateName,
+                    stateType,
+                    optionsMap,
+                    serializerConfigsMap,
+                    new HashMap<>(),
+                    binaryOptionsMap);
         }
     }
 }

@@ -101,9 +101,9 @@ class RocksDBReducingMergeState<K, N, V> extends AbstractRocksDBAppendingState<K
     }
 
     /**
-     * Merges the values from all {@code sources} namespaces into the {@code target} namespace.
-     * Each source value is read, deleted, and folded into a running result using the reduce
-     * function. The result is then reduced with any existing target value and written back.
+     * Merges the values from all {@code sources} namespaces into the {@code target} namespace. Each
+     * source value is read, deleted, and folded into a running result using the reduce function.
+     * The result is then reduced with any existing target value and written back.
      */
     @Override
     public void mergeNamespaces(N target, Collection<N> sources) throws Exception {

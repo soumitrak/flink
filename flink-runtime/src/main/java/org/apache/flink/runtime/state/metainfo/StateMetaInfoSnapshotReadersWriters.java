@@ -43,8 +43,7 @@ public class StateMetaInfoSnapshotReadersWriters {
 
     /**
      * Current version for the serialization format of {@link StateMetaInfoSnapshotReadersWriters}.
-     * - v6: since Flink 1.7.x
-     * - v8: adds binaryOptions map for merge-operator function bytes
+     * - v6: since Flink 1.7.x - v8: adds binaryOptions map for merge-operator function bytes
      */
     public static final int CURRENT_STATE_META_INFO_SNAPSHOT_VERSION = 8;
 

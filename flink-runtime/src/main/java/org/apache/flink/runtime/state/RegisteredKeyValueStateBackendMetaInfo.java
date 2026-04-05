@@ -78,10 +78,10 @@ public class RegisteredKeyValueStateBackendMetaInfo<N, S> extends RegisteredStat
      * {@code IN} and {@code ACC} may be different types, a dedicated serializer for {@code IN} is
      * required.
      *
-     * <p>There is no corresponding merge output serializer because the output ({@code OUT}) is never
-     * stored in RocksDB. On {@code get()}, Flink reads and deserializes the {@code ACC}, then calls
-     * {@code aggFunction.getResult(acc)} in-memory. {@code OUT} only exists as a transient Java
-     * object returned to the caller.
+     * <p>There is no corresponding merge output serializer because the output ({@code OUT}) is
+     * never stored in RocksDB. On {@code get()}, Flink reads and deserializes the {@code ACC}, then
+     * calls {@code aggFunction.getResult(acc)} in-memory. {@code OUT} only exists as a transient
+     * Java object returned to the caller.
      *
      * <p>For {@code ReducingMergeState<T>}, all three roles (input, accumulator, output) share the
      * same type {@code T}, so {@link #stateSerializerProvider} alone suffices and this field is

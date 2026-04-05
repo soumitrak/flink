@@ -628,8 +628,8 @@ public class HeapKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
     }
 
     /**
-     * State-create stub for {@code AggregatingMergeState} on the heap backend. Always throws
-     * {@link UnsupportedOperationException} because merge-operator-backed state requires RocksDB.
+     * State-create stub for {@code AggregatingMergeState} on the heap backend. Always throws {@link
+     * UnsupportedOperationException} because merge-operator-backed state requires RocksDB.
      */
     private static <K, N, SV, S extends State, IS extends S> IS unsupportedAggregatingMergeCreate(
             StateDescriptor<S, SV> stateDesc,
@@ -650,8 +650,8 @@ public class HeapKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
     }
 
     /**
-     * State-update stub for {@code AggregatingMergeState} on the heap backend. Always throws
-     * {@link UnsupportedOperationException} because merge-operator-backed state requires RocksDB.
+     * State-update stub for {@code AggregatingMergeState} on the heap backend. Always throws {@link
+     * UnsupportedOperationException} because merge-operator-backed state requires RocksDB.
      */
     private static <K, N, SV, S extends State, IS extends S> IS unsupportedAggregatingMergeUpdate(
             StateDescriptor<S, SV> stateDesc, StateTable<K, N, SV> stateTable, IS existingState) {

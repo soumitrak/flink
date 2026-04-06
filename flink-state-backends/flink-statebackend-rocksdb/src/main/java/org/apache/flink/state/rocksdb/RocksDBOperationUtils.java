@@ -34,7 +34,7 @@ import org.apache.flink.util.InstantiationUtil;
 import org.apache.flink.util.OperatingSystem;
 import org.apache.flink.util.Preconditions;
 
-import org.rocksdb.AbstractMergeOperator;
+import org.rocksdb.AbstractAssociativeMergeOperator;
 import org.rocksdb.ColumnFamilyDescriptor;
 import org.rocksdb.ColumnFamilyHandle;
 import org.rocksdb.ColumnFamilyOptions;
@@ -282,9 +282,9 @@ public class RocksDBOperationUtils {
     }
 
     /**
-     * Creates a state info using a custom Java {@link AbstractMergeOperator} instead of the default
-     * string-append merge operator. Used for merge-operator-backed state types such as {@link
-     * RocksDBReducingMergeState} and {@link RocksDBAggregatingMergeState}.
+     * Creates a state info using a custom Java {@link AbstractAssociativeMergeOperator} instead of
+     * the default string-append merge operator. Used for merge-operator-backed state types such as
+     * {@link RocksDBReducingMergeState} and {@link RocksDBAggregatingMergeState}.
      *
      * <p>The {@code mergeOperator} reference is stored inside the {@link ColumnFamilyOptions} to
      * prevent it from being garbage-collected while the column family is open.
@@ -293,7 +293,7 @@ public class RocksDBOperationUtils {
             RegisteredStateMetaInfoBase metaInfoBase,
             RocksDB db,
             Function<String, ColumnFamilyOptions> columnFamilyOptionsFactory,
-            AbstractMergeOperator mergeOperator,
+            AbstractAssociativeMergeOperator mergeOperator,
             @Nullable RocksDbTtlCompactFiltersManager ttlCompactFiltersManager,
             @Nullable Long writeBufferManagerCapacity,
             ICloseableRegistry cancelStreamRegistryForRestore) {
@@ -346,7 +346,7 @@ public class RocksDBOperationUtils {
     public static ColumnFamilyDescriptor createColumnFamilyDescriptorWithMergeOperator(
             RegisteredStateMetaInfoBase metaInfoBase,
             Function<String, ColumnFamilyOptions> columnFamilyOptionsFactory,
-            AbstractMergeOperator mergeOperator,
+            AbstractAssociativeMergeOperator mergeOperator,
             @Nullable RocksDbTtlCompactFiltersManager ttlCompactFiltersManager,
             @Nullable Long writeBufferManagerCapacity) {
 
@@ -375,13 +375,13 @@ public class RocksDBOperationUtils {
     }
 
     /**
-     * Attempts to reconstruct an {@link AbstractMergeOperator} from the serialized function bytes
-     * stored in the given meta info. Returns {@code null} if the meta info does not contain merge
-     * function bytes (e.g. for non-merge states or old-format snapshots).
+     * Attempts to reconstruct an {@link AbstractAssociativeMergeOperator} from the serialized
+     * function bytes stored in the given meta info. Returns {@code null} if the meta info does not
+     * contain merge function bytes (e.g. for non-merge states or old-format snapshots).
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
     @Nullable
-    public static AbstractMergeOperator tryCreateMergeOperator(
+    public static AbstractAssociativeMergeOperator tryCreateMergeOperator(
             RegisteredKeyValueStateBackendMetaInfo<?, ?> metaInfo,
             ClassLoader userCodeClassLoader) {
 

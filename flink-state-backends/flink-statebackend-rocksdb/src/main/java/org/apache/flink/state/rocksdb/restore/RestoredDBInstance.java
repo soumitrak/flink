@@ -27,7 +27,7 @@ import org.apache.flink.state.rocksdb.RocksDBOperationUtils;
 import org.apache.flink.state.rocksdb.ttl.RocksDbTtlCompactFiltersManager;
 import org.apache.flink.util.IOUtils;
 
-import org.rocksdb.AbstractMergeOperator;
+import org.rocksdb.AbstractAssociativeMergeOperator;
 import org.rocksdb.ColumnFamilyDescriptor;
 import org.rocksdb.ColumnFamilyHandle;
 import org.rocksdb.ColumnFamilyOptions;
@@ -160,7 +160,7 @@ public class RestoredDBInstance implements AutoCloseable {
             RegisteredStateMetaInfoBase metaInfoBase =
                     RegisteredStateMetaInfoBase.fromMetaInfoSnapshot(stateMetaInfoSnapshot);
 
-            AbstractMergeOperator mergeOperator =
+            AbstractAssociativeMergeOperator mergeOperator =
                     metaInfoBase instanceof RegisteredKeyValueStateBackendMetaInfo
                             ? RocksDBOperationUtils.tryCreateMergeOperator(
                                     (RegisteredKeyValueStateBackendMetaInfo<?, ?>) metaInfoBase,

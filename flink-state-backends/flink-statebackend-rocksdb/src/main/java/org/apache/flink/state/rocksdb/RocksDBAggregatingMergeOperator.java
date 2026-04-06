@@ -22,19 +22,19 @@ import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.core.memory.DataInputDeserializer;
 import org.apache.flink.core.memory.DataOutputSerializer;
 
-import org.rocksdb.AbstractMergeOperator;
+import org.rocksdb.AbstractAssociativeMergeOperator;
 
 import java.nio.ByteBuffer;
 
 /**
- * A RocksDB {@link AbstractMergeOperator} that applies an {@link AggregateFunction} to merge state
- * operands. Used by {@link RocksDBAggregatingMergeState} to avoid synchronous reads on {@code
- * add()}.
+ * A RocksDB {@link AbstractAssociativeMergeOperator} that applies an {@link AggregateFunction} to
+ * merge state operands. Used by {@link RocksDBAggregatingMergeState} to avoid synchronous reads on
+ * {@code add()}.
  *
  * <p>The stored base value is a serialized {@code ACC} (accumulator). Each merge operand is a
- * serialized {@code IN} (input value). On {@code fullMerge}, each input operand is added to the
- * accumulator via {@link AggregateFunction#add}. Partial merge is declined (returns {@code null})
- * because input and accumulator types may differ.
+ * serialized {@code IN} (input value). On each {@code merge} call, the operand is added to the
+ * accumulator via {@link AggregateFunction#add}. If no existing value is present, a fresh
+ * accumulator is created via {@link AggregateFunction#createAccumulator()}.
  *
  * <p>Thread safety: fresh serializer instances are created per call.
  *
@@ -42,7 +42,7 @@ import java.nio.ByteBuffer;
  * @param <ACC> The accumulator type stored in RocksDB
  * @param <OUT> The result type returned from {@code get()}
  */
-class RocksDBAggregatingMergeOperator<IN, ACC, OUT> extends AbstractMergeOperator {
+class RocksDBAggregatingMergeOperator<IN, ACC, OUT> extends AbstractAssociativeMergeOperator {
 
     private final AggregateFunction<IN, ACC, OUT> aggFunction;
     private final TypeSerializer<IN> inputSerializer;
@@ -71,20 +71,20 @@ class RocksDBAggregatingMergeOperator<IN, ACC, OUT> extends AbstractMergeOperato
     }
 
     /**
-     * Applies the aggregate function to fold all operands into the existing accumulator.
+     * Applies the aggregate function to fold a single operand into the existing accumulator.
      *
      * <p>If no existing value is present a fresh accumulator is created via {@link
-     * AggregateFunction#createAccumulator()}. Each operand (serialized {@code IN}) is deserialized
+     * AggregateFunction#createAccumulator()}. The operand (serialized {@code IN}) is deserialized
      * and added to the accumulator via {@link AggregateFunction#add}. The resulting accumulator is
      * serialized and returned as the new base value.
      *
      * @param key the RocksDB key (unused)
      * @param existing the current base value (serialized {@code ACC}), or {@code null} if absent
-     * @param operands the pending merge operands (each a serialized {@code IN})
+     * @param value the merge operand (serialized {@code IN})
      * @return the serialized merged accumulator
      */
     @Override
-    public byte[] fullMerge(ByteBuffer key, ByteBuffer existing, ByteBuffer[] operands) {
+    public byte[] merge(ByteBuffer key, ByteBuffer existing, ByteBuffer value) {
         try {
             DataInputDeserializer input = new DataInputDeserializer();
             TypeSerializer<IN> inSer = inputSerializer.duplicate();
@@ -97,27 +97,13 @@ class RocksDBAggregatingMergeOperator<IN, ACC, OUT> extends AbstractMergeOperato
                 acc = aggFunction.createAccumulator();
             }
 
-            for (ByteBuffer operand : operands) {
-                IN value = deserializeIn(operand, inSer, input);
-                acc = aggFunction.add(value, acc);
-            }
+            IN inValue = deserializeIn(value, inSer, input);
+            acc = aggFunction.add(inValue, acc);
 
             return serializeAcc(acc, accSer);
         } catch (Exception e) {
-            throw new RuntimeException("Error in RocksDBAggregatingMergeOperator.fullMerge", e);
+            throw new RuntimeException("Error in RocksDBAggregatingMergeOperator.merge", e);
         }
-    }
-
-    /**
-     * Declines partial merge because {@code IN} and {@code ACC} may be different types, making it
-     * impossible to reduce two raw input operands into one. RocksDB will retain both operands and
-     * let {@link #fullMerge} handle them when the value is read.
-     *
-     * @return {@code null} to signal that partial merge is not supported
-     */
-    @Override
-    public byte[] partialMerge(ByteBuffer key, ByteBuffer left, ByteBuffer right) {
-        return null;
     }
 
     private IN deserializeIn(ByteBuffer buf, TypeSerializer<IN> ser, DataInputDeserializer input)

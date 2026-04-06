@@ -22,28 +22,25 @@ import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.core.memory.DataInputDeserializer;
 import org.apache.flink.core.memory.DataOutputSerializer;
 
-import org.rocksdb.AbstractMergeOperator;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.rocksdb.AbstractAssociativeMergeOperator;
 
 import java.nio.ByteBuffer;
 
 /**
- * A RocksDB {@link AbstractMergeOperator} that applies a {@link ReduceFunction} to merge state
- * operands. Used by {@link RocksDBReducingMergeState} to avoid synchronous reads on {@code add()}.
+ * A RocksDB {@link AbstractAssociativeMergeOperator} that applies a {@link ReduceFunction} to merge
+ * state operands. Used by {@link RocksDBReducingMergeState} to avoid synchronous reads on {@code
+ * add()}.
  *
- * <p>The stored value and each operand are serialized {@code V} values. On {@code fullMerge} they
- * are folded left-to-right via the reduce function. On {@code partialMerge} two adjacent operands
- * are pre-reduced.
+ * <p>The stored value and each operand are serialized {@code V} values. On each {@code merge} call
+ * a single operand is folded into the existing value via the reduce function. RocksDB automatically
+ * chains multiple operands and handles partial merging during compaction.
  *
  * <p>Thread safety: fresh serializer instances are created per call, so this class is thread-safe
  * for concurrent invocations from compaction threads and user threads.
  *
  * @param <V> The type of the state value
  */
-class RocksDBReducingMergeOperator<V> extends AbstractMergeOperator {
-
-    private static final Logger LOG = LoggerFactory.getLogger(RocksDBReducingMergeOperator.class);
+class RocksDBReducingMergeOperator<V> extends AbstractAssociativeMergeOperator {
 
     private final ReduceFunction<V> reduceFunction;
     private final TypeSerializer<V> valueSerializer;
@@ -67,65 +64,30 @@ class RocksDBReducingMergeOperator<V> extends AbstractMergeOperator {
     }
 
     /**
-     * Folds the existing base value and all pending operands into a single value using the reduce
-     * function.
+     * Folds a single operand into the existing value using the reduce function.
      *
-     * <p>Values are processed left-to-right: the existing base (if present) is taken as the initial
-     * accumulator, then each operand is reduced into it. If neither a base value nor any operands
-     * are present, {@code null} is returned.
+     * <p>If no existing value is present the operand is returned as-is. Otherwise the existing
+     * value and the operand are combined via {@link ReduceFunction#reduce}.
      *
      * @param key the RocksDB key (unused)
      * @param existing the current base value (serialized {@code V}), or {@code null} if absent
-     * @param operands the pending merge operands (each a serialized {@code V})
-     * @return the serialized reduced value, or {@code null} if there is nothing to reduce
+     * @param value the merge operand (serialized {@code V})
+     * @return the serialized reduced value
      */
     @Override
-    public byte[] fullMerge(ByteBuffer key, ByteBuffer existing, ByteBuffer[] operands) {
+    public byte[] merge(ByteBuffer key, ByteBuffer existing, ByteBuffer value) {
         try {
             DataInputDeserializer input = new DataInputDeserializer();
             TypeSerializer<V> ser = valueSerializer.duplicate();
 
-            V current = null;
-            if (existing != null) {
-                current = deserialize(existing, ser, input);
+            V valueDeserialized = deserialize(value, ser, input);
+            if (existing == null) {
+                return serialize(valueDeserialized, ser);
             }
-
-            for (ByteBuffer operand : operands) {
-                V value = deserialize(operand, ser, input);
-                current = (current == null) ? value : reduceFunction.reduce(current, value);
-            }
-
-            if (current == null) {
-                return null;
-            }
-            return serialize(current, ser);
+            V existingDeserialized = deserialize(existing, ser, input);
+            return serialize(reduceFunction.reduce(existingDeserialized, valueDeserialized), ser);
         } catch (Exception e) {
-            throw new RuntimeException("Error in RocksDBReducingMergeOperator.fullMerge", e);
-        }
-    }
-
-    /**
-     * Pre-reduces two adjacent operands during compaction. This allows RocksDB to compact the merge
-     * operand list incrementally without waiting for a full merge. On failure, returns {@code null}
-     * to defer reduction to the next {@link #fullMerge} call.
-     *
-     * @param key the RocksDB key (unused)
-     * @param left the left operand (serialized {@code V})
-     * @param right the right operand (serialized {@code V})
-     * @return the serialized reduced value, or {@code null} if partial merge fails
-     */
-    @Override
-    public byte[] partialMerge(ByteBuffer key, ByteBuffer left, ByteBuffer right) {
-        try {
-            DataInputDeserializer input = new DataInputDeserializer();
-            TypeSerializer<V> ser = valueSerializer.duplicate();
-
-            V l = deserialize(left, ser, input);
-            V r = deserialize(right, ser, input);
-            return serialize(reduceFunction.reduce(l, r), ser);
-        } catch (Exception e) {
-            // Decline partial merge on error; fullMerge will handle it later
-            return null;
+            throw new RuntimeException("Error in RocksDBReducingMergeOperator.merge", e);
         }
     }
 

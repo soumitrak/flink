@@ -866,7 +866,7 @@ public class RocksDBKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 
             if (stateDesc instanceof ReducingMergeStateDescriptor) {
                 @SuppressWarnings("unchecked")
-                org.rocksdb.AbstractMergeOperator mergeOperator =
+                org.rocksdb.AbstractAssociativeMergeOperator mergeOperator =
                         new RocksDBReducingMergeOperator<>(
                                 ((ReducingMergeStateDescriptor<SV>) stateDesc).getReduceFunction(),
                                 stateSerializer);
@@ -881,7 +881,7 @@ public class RocksDBKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                                 ICloseableRegistry.NO_OP);
             } else if (stateDesc instanceof AggregatingMergeStateDescriptor) {
                 @SuppressWarnings("unchecked")
-                org.rocksdb.AbstractMergeOperator mergeOperator =
+                org.rocksdb.AbstractAssociativeMergeOperator mergeOperator =
                         createAggregatingMergeOperator(
                                 (AggregatingMergeStateDescriptor<?, SV, ?>) stateDesc,
                                 stateSerializer);

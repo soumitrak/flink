@@ -32,7 +32,7 @@ import org.apache.flink.util.FileUtils;
 import org.apache.flink.util.IOUtils;
 import org.apache.flink.util.Preconditions;
 
-import org.rocksdb.AbstractMergeOperator;
+import org.rocksdb.AbstractAssociativeMergeOperator;
 import org.rocksdb.ColumnFamilyDescriptor;
 import org.rocksdb.ColumnFamilyHandle;
 import org.rocksdb.ColumnFamilyOptions;
@@ -197,7 +197,7 @@ class RocksDBHandle implements AutoCloseable {
             if (columnFamilyHandle == null) {
                 // For merge-operator-backed states, recreate the column family with the correct
                 // merge operator so that pending merge operands in SST files are applied correctly.
-                AbstractMergeOperator mergeOperator =
+                AbstractAssociativeMergeOperator mergeOperator =
                         stateMetaInfo instanceof RegisteredKeyValueStateBackendMetaInfo
                                 ? RocksDBOperationUtils.tryCreateMergeOperator(
                                         (RegisteredKeyValueStateBackendMetaInfo<?, ?>)
@@ -263,7 +263,7 @@ class RocksDBHandle implements AutoCloseable {
         // For merge-operator-backed states, import the SST files into a column family that already
         // has the correct merge operator set, so that any pending merge operands are applied
         // correctly during reads / compaction.
-        AbstractMergeOperator mergeOperator =
+        AbstractAssociativeMergeOperator mergeOperator =
                 stateMetaInfo instanceof RegisteredKeyValueStateBackendMetaInfo
                         ? RocksDBOperationUtils.tryCreateMergeOperator(
                                 (RegisteredKeyValueStateBackendMetaInfo<?, ?>) stateMetaInfo,

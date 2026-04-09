@@ -198,7 +198,7 @@ public abstract class RichAsyncFunction<IN, OUT> extends AbstractRichFunction
         }
 
         @Override
-        public <IN, ACC, OUT> AggregatingMergeState<IN, OUT> getAggregatingMergeState(
+        public <IN, ACC, OUT> AggregatingMergeState<IN, ACC, OUT> getAggregatingMergeState(
                 AggregatingMergeStateDescriptor<IN, ACC, OUT> stateProperties) {
             throw new UnsupportedOperationException(
                     "State is not supported in rich async functions.");

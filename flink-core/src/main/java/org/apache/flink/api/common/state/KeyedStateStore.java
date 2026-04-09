@@ -264,7 +264,7 @@ public interface KeyedStateStore {
      *     merge state.
      */
     @PublicEvolving
-    <IN, ACC, OUT> AggregatingMergeState<IN, OUT> getAggregatingMergeState(
+    <IN, ACC, OUT> AggregatingMergeState<IN, ACC, OUT> getAggregatingMergeState(
             AggregatingMergeStateDescriptor<IN, ACC, OUT> stateProperties);
 
     // --------------------------

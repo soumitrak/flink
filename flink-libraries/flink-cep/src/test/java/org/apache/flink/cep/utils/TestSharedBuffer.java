@@ -148,7 +148,7 @@ public class TestSharedBuffer<V> extends SharedBuffer<V> {
         }
 
         @Override
-        public <IN, ACC, OUT> AggregatingMergeState<IN, OUT> getAggregatingMergeState(
+        public <IN, ACC, OUT> AggregatingMergeState<IN, ACC, OUT> getAggregatingMergeState(
                 AggregatingMergeStateDescriptor<IN, ACC, OUT> stateProperties) {
             throw new UnsupportedOperationException();
         }

@@ -32,4 +32,4 @@ import org.apache.flink.api.common.state.AggregatingMergeState;
  * @param <OUT> Type of the value extracted from the state
  */
 public interface InternalAggregatingMergeState<K, N, IN, SV, OUT>
-        extends InternalMergingState<K, N, IN, SV, OUT>, AggregatingMergeState<IN, OUT> {}
+        extends InternalMergingState<K, N, IN, SV, OUT>, AggregatingMergeState<IN, SV, OUT> {}

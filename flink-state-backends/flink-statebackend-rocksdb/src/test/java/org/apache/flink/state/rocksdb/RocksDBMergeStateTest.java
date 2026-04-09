@@ -306,7 +306,7 @@ class RocksDBMergeStateTest {
                             LongPrimitiveArraySerializer.INSTANCE);
 
             backend.setCurrentKey(1);
-            AggregatingMergeState<Long, Long> state =
+            AggregatingMergeState<Long, long[], Long> state =
                     backend.getPartitionedState(
                             VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, desc);
 
@@ -335,7 +335,7 @@ class RocksDBMergeStateTest {
                             LongSerializer.INSTANCE,
                             LongPrimitiveArraySerializer.INSTANCE);
 
-            AggregatingMergeState<Long, Long> state =
+            AggregatingMergeState<Long, long[], Long> state =
                     backend.getPartitionedState(
                             VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, desc);
 
@@ -370,7 +370,7 @@ class RocksDBMergeStateTest {
                             LongPrimitiveArraySerializer.INSTANCE);
 
             backend.setCurrentKey(1);
-            AggregatingMergeState<Long, Long> state =
+            AggregatingMergeState<Long, long[], Long> state =
                     backend.getPartitionedState(
                             VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, desc);
 
@@ -399,12 +399,12 @@ class RocksDBMergeStateTest {
 
             backend.setCurrentKey(1);
 
-            AggregatingMergeState<Long, Long> stateNs1 =
+            AggregatingMergeState<Long, long[], Long> stateNs1 =
                     backend.getPartitionedState("ns1", StringSerializer.INSTANCE, desc);
             stateNs1.add(10L);
             stateNs1.add(20L);
 
-            AggregatingMergeState<Long, Long> stateNs2 =
+            AggregatingMergeState<Long, long[], Long> stateNs2 =
                     backend.getPartitionedState("ns2", StringSerializer.INSTANCE, desc);
             stateNs2.add(30L);
 
@@ -416,7 +416,7 @@ class RocksDBMergeStateTest {
                                     stateNs1;
             internalState.mergeNamespaces("target", Arrays.asList("ns1", "ns2"));
 
-            AggregatingMergeState<Long, Long> targetState =
+            AggregatingMergeState<Long, long[], Long> targetState =
                     backend.getPartitionedState("target", StringSerializer.INSTANCE, desc);
             assertThat(targetState.get()).isEqualTo(20L);
 
@@ -445,12 +445,12 @@ class RocksDBMergeStateTest {
 
             backend.setCurrentKey(1);
 
-            AggregatingMergeState<Long, Long> stateNs1 =
+            AggregatingMergeState<Long, long[], Long> stateNs1 =
                     backend.getPartitionedState("ns1", StringSerializer.INSTANCE, desc);
             stateNs1.add(10L);
             stateNs1.add(20L); // ns1 acc: [30, 2]
 
-            AggregatingMergeState<Long, Long> stateTarget =
+            AggregatingMergeState<Long, long[], Long> stateTarget =
                     backend.getPartitionedState("target", StringSerializer.INSTANCE, desc);
             stateTarget.add(50L); // target acc: [50, 1]
 
@@ -486,7 +486,7 @@ class RocksDBMergeStateTest {
                             LongPrimitiveArraySerializer.INSTANCE);
 
             backend.setCurrentKey(1);
-            AggregatingMergeState<Long, Long> stateNs1 =
+            AggregatingMergeState<Long, long[], Long> stateNs1 =
                     backend.getPartitionedState("ns1", StringSerializer.INSTANCE, desc);
             stateNs1.add(60L);
             stateNs1.add(90L); // ns1 acc: [150, 2] → avg = 75
@@ -502,6 +502,124 @@ class RocksDBMergeStateTest {
 
             assertThat(backend.getPartitionedState("target", StringSerializer.INSTANCE, desc).get())
                     .isEqualTo(75L);
+        } finally {
+            backend.dispose();
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // set() tests for ReducingMergeState
+    // -------------------------------------------------------------------------
+
+    @Test
+    void testReducingMergeStateSet() throws Exception {
+        RocksDBKeyedStateBackend<Integer> backend =
+                RocksDBTestUtils.builderForTestDefaults(tempDir, IntSerializer.INSTANCE).build();
+
+        try {
+            ReducingMergeStateDescriptor<Long> desc =
+                    new ReducingMergeStateDescriptor<>(
+                            "sumState", Long::sum, LongSerializer.INSTANCE);
+
+            backend.setCurrentKey(1);
+            ReducingMergeState<Long> state =
+                    backend.getPartitionedState(
+                            VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, desc);
+
+            state.add(10L);
+            state.add(20L);
+            assertThat(state.get()).isEqualTo(30L);
+
+            // set() must overwrite the previously merged value
+            state.set(100L);
+            assertThat(state.get()).isEqualTo(100L);
+        } finally {
+            backend.dispose();
+        }
+    }
+
+    @Test
+    void testReducingMergeStateSetThenAdd() throws Exception {
+        RocksDBKeyedStateBackend<Integer> backend =
+                RocksDBTestUtils.builderForTestDefaults(tempDir, IntSerializer.INSTANCE).build();
+
+        try {
+            ReducingMergeStateDescriptor<Long> desc =
+                    new ReducingMergeStateDescriptor<>(
+                            "sumState", Long::sum, LongSerializer.INSTANCE);
+
+            backend.setCurrentKey(1);
+            ReducingMergeState<Long> state =
+                    backend.getPartitionedState(
+                            VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, desc);
+
+            state.add(10L);
+            state.add(20L);
+            // reset to 100, then add more on top
+            state.set(100L);
+            state.add(5L);
+            assertThat(state.get()).isEqualTo(105L);
+        } finally {
+            backend.dispose();
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // set() tests for AggregatingMergeState
+    // -------------------------------------------------------------------------
+
+    @Test
+    void testAggregatingMergeStateSet() throws Exception {
+        RocksDBKeyedStateBackend<Integer> backend =
+                RocksDBTestUtils.builderForTestDefaults(tempDir, IntSerializer.INSTANCE).build();
+
+        try {
+            AggregatingMergeStateDescriptor<Long, long[], Long> desc =
+                    new AggregatingMergeStateDescriptor<>(
+                            "aggAvg",
+                            new AverageAggregateFunction(),
+                            LongSerializer.INSTANCE,
+                            LongPrimitiveArraySerializer.INSTANCE);
+
+            backend.setCurrentKey(1);
+            AggregatingMergeState<Long, long[], Long> state =
+                    backend.getPartitionedState(
+                            VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, desc);
+
+            state.add(10L);
+            state.add(20L);
+            assertThat(state.get()).isEqualTo(15L); // (10+20)/2
+
+            // set() must overwrite the previously merged accumulator
+            state.set(new long[] {100L, 1L}); // acc = [sum=100, count=1]
+            assertThat(state.get()).isEqualTo(100L); // 100/1
+        } finally {
+            backend.dispose();
+        }
+    }
+
+    @Test
+    void testAggregatingMergeStateSetThenAdd() throws Exception {
+        RocksDBKeyedStateBackend<Integer> backend =
+                RocksDBTestUtils.builderForTestDefaults(tempDir, IntSerializer.INSTANCE).build();
+
+        try {
+            AggregatingMergeStateDescriptor<Long, long[], Long> desc =
+                    new AggregatingMergeStateDescriptor<>(
+                            "aggAvg",
+                            new AverageAggregateFunction(),
+                            LongSerializer.INSTANCE,
+                            LongPrimitiveArraySerializer.INSTANCE);
+
+            backend.setCurrentKey(1);
+            AggregatingMergeState<Long, long[], Long> state =
+                    backend.getPartitionedState(
+                            VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, desc);
+
+            // seed the accumulator, then add more values on top
+            state.set(new long[] {100L, 1L}); // acc = [sum=100, count=1]
+            state.add(50L); // acc = [sum=150, count=2]
+            assertThat(state.get()).isEqualTo(75L); // 150/2
         } finally {
             backend.dispose();
         }
@@ -574,7 +692,7 @@ class RocksDBMergeStateTest {
                             VoidNamespace.INSTANCE,
                             VoidNamespaceSerializer.INSTANCE,
                             reducingMergeDesc);
-            AggregatingMergeState<Long, Long> aggregatingMergeState =
+            AggregatingMergeState<Long, long[], Long> aggregatingMergeState =
                     backend.getPartitionedState(
                             VoidNamespace.INSTANCE,
                             VoidNamespaceSerializer.INSTANCE,
@@ -720,7 +838,7 @@ class RocksDBMergeStateTest {
                             new AverageAggregateFunction(),
                             LongSerializer.INSTANCE,
                             LongPrimitiveArraySerializer.INSTANCE);
-            AggregatingMergeState<Long, Long> aggMergeState =
+            AggregatingMergeState<Long, long[], Long> aggMergeState =
                     backend.getPartitionedState(
                             VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, aggMergeDesc);
 

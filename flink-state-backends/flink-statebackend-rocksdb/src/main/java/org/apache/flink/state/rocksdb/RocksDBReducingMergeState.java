@@ -88,6 +88,16 @@ class RocksDBReducingMergeState<K, N, V> extends AbstractRocksDBAppendingState<K
     }
 
     /**
+     * Overwrites the current state with the given value using {@code db.put()}, discarding any
+     * previously merged operands. Subsequent {@code add()} calls will be reduced on top of this
+     * value.
+     */
+    @Override
+    public void set(V value) throws RocksDBException {
+        updateInternal(value);
+    }
+
+    /**
      * Appends the value as a RocksDB merge operand. The reduce function is applied lazily by the
      * {@link RocksDBReducingMergeOperator} during compaction or on {@code get()}.
      */

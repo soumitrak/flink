@@ -34,4 +34,13 @@ import org.apache.flink.annotation.PublicEvolving;
  * @param <T> Type of the value in the state
  */
 @PublicEvolving
-public interface ReducingMergeState<T> extends ReducingState<T> {}
+public interface ReducingMergeState<T> extends ReducingState<T> {
+
+    /**
+     * Overwrites the current state with the given value, discarding any previously merged operands.
+     * Subsequent {@code add()} calls will be reduced on top of this value.
+     *
+     * @param value the value to set as the new state
+     */
+    void set(T value) throws Exception;
+}

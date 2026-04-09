@@ -246,7 +246,7 @@ public abstract class AbstractRuntimeUDFContext implements RuntimeContext {
 
     @Override
     @PublicEvolving
-    public <IN, ACC, OUT> AggregatingMergeState<IN, OUT> getAggregatingMergeState(
+    public <IN, ACC, OUT> AggregatingMergeState<IN, ACC, OUT> getAggregatingMergeState(
             AggregatingMergeStateDescriptor<IN, ACC, OUT> stateProperties) {
         throw new UnsupportedOperationException(
                 "This state is only accessible by functions executed on a KeyedStream");

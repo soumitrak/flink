@@ -206,7 +206,7 @@ class CepRuntimeContext implements RuntimeContext {
     }
 
     @Override
-    public <IN, ACC, OUT> AggregatingMergeState<IN, OUT> getAggregatingMergeState(
+    public <IN, ACC, OUT> AggregatingMergeState<IN, ACC, OUT> getAggregatingMergeState(
             final AggregatingMergeStateDescriptor<IN, ACC, OUT> stateProperties) {
         throw new UnsupportedOperationException("State is not supported.");
     }

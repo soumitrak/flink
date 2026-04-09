@@ -41,7 +41,7 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  */
 @PublicEvolving
 public class AggregatingMergeStateDescriptor<IN, ACC, OUT>
-        extends StateDescriptor<AggregatingMergeState<IN, OUT>, ACC> {
+        extends StateDescriptor<AggregatingMergeState<IN, ACC, OUT>, ACC> {
 
     private static final long serialVersionUID = 1L;
 

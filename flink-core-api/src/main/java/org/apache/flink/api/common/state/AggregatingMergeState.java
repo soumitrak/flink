@@ -32,7 +32,17 @@ import org.apache.flink.annotation.PublicEvolving;
  * backend will throw {@link UnsupportedOperationException} at state registration time.
  *
  * @param <IN> Type of the value added to the state
+ * @param <ACC> Type of the accumulator stored in the state
  * @param <OUT> Type of the value returned from the state
  */
 @PublicEvolving
-public interface AggregatingMergeState<IN, OUT> extends AggregatingState<IN, OUT> {}
+public interface AggregatingMergeState<IN, ACC, OUT> extends AggregatingState<IN, OUT> {
+
+    /**
+     * Overwrites the current state with the given accumulator, discarding any previously merged
+     * operands. Subsequent {@code add()} calls will be aggregated on top of this accumulator.
+     *
+     * @param acc the accumulator value to set as the new state
+     */
+    void set(ACC acc) throws Exception;
+}

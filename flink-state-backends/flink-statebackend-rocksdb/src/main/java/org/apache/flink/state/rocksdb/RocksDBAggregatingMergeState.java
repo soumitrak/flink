@@ -100,6 +100,16 @@ class RocksDBAggregatingMergeState<K, N, IN, ACC, R>
     }
 
     /**
+     * Overwrites the current state with the given accumulator using {@code db.put()}, discarding
+     * any previously merged operands. Subsequent {@code add()} calls will be aggregated on top of
+     * this accumulator.
+     */
+    @Override
+    public void set(ACC acc) throws RocksDBException {
+        updateInternal(acc);
+    }
+
+    /**
      * Serializes the input value as {@code IN} and appends it as a RocksDB merge operand. The
      * aggregate function is applied lazily by the {@link RocksDBAggregatingMergeOperator} during
      * compaction or on {@code get()}.

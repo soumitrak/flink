@@ -249,7 +249,7 @@ public class StreamingRuntimeContext extends AbstractRuntimeUDFContext {
     }
 
     @Override
-    public <IN, ACC, OUT> AggregatingMergeState<IN, OUT> getAggregatingMergeState(
+    public <IN, ACC, OUT> AggregatingMergeState<IN, ACC, OUT> getAggregatingMergeState(
             AggregatingMergeStateDescriptor<IN, ACC, OUT> stateProperties) {
         KeyedStateStore keyedStateStore = checkPreconditionsAndGetKeyedStateStore(stateProperties);
         stateProperties.initializeSerializerUnlessSet(this::createSerializer);

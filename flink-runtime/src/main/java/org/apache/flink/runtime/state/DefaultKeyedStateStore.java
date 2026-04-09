@@ -156,7 +156,7 @@ public class DefaultKeyedStateStore implements KeyedStateStore {
     }
 
     @Override
-    public <IN, ACC, OUT> AggregatingMergeState<IN, OUT> getAggregatingMergeState(
+    public <IN, ACC, OUT> AggregatingMergeState<IN, ACC, OUT> getAggregatingMergeState(
             AggregatingMergeStateDescriptor<IN, ACC, OUT> stateProperties) {
         requireNonNull(stateProperties, "The state properties must not be null");
         try {

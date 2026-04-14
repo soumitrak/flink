@@ -53,7 +53,6 @@ class RocksDBAggregatingMergeState<K, N, IN, ACC, R>
         implements InternalAggregatingMergeState<K, N, IN, ACC, R> {
 
     private AggregateFunction<IN, ACC, R> aggFunction;
-    private TypeSerializer<IN> inputSerializer;
 
     private RocksDBAggregatingMergeState(
             ColumnFamilyHandle columnFamily,
@@ -61,11 +60,9 @@ class RocksDBAggregatingMergeState<K, N, IN, ACC, R>
             TypeSerializer<ACC> accSerializer,
             ACC defaultValue,
             AggregateFunction<IN, ACC, R> aggFunction,
-            TypeSerializer<IN> inputSerializer,
             RocksDBKeyedStateBackend<K> backend) {
         super(columnFamily, namespaceSerializer, accSerializer, defaultValue, backend);
         this.aggFunction = aggFunction;
-        this.inputSerializer = inputSerializer;
     }
 
     @Override
@@ -100,6 +97,19 @@ class RocksDBAggregatingMergeState<K, N, IN, ACC, R>
     }
 
     /**
+     * Overwrites the current state with the given value, discarding any previously merged
+     * operands. Subsequent {@code add()} calls will be aggregated on top of this value.
+     * The implementation must create the accumulator with this value and store the
+     * accumulator.
+     *
+     * @param value the value to set as the new state
+     */
+    @Override
+    public void setValue(IN value) throws Exception {
+        set(aggFunction.add(value, aggFunction.createAccumulator()));
+    }
+
+    /**
      * Overwrites the current state with the given accumulator using {@code db.put()}, discarding
      * any previously merged operands. Subsequent {@code add()} calls will be aggregated on top of
      * this accumulator.
@@ -117,7 +127,7 @@ class RocksDBAggregatingMergeState<K, N, IN, ACC, R>
     @Override
     public void add(IN value) throws IOException, RocksDBException {
         dataOutputView.clear();
-        inputSerializer.serialize(value, dataOutputView);
+        valueSerializer.serialize(aggFunction.add(value, aggFunction.createAccumulator()), dataOutputView);
         backend.db.merge(
                 columnFamily,
                 writeOptions,
@@ -179,13 +189,6 @@ class RocksDBAggregatingMergeState<K, N, IN, ACC, R>
         return this;
     }
 
-    /** Updates the input serializer; called on state re-registration after a schema upgrade. */
-    RocksDBAggregatingMergeState<K, N, IN, ACC, R> setInputSerializer(
-            TypeSerializer<IN> inputSerializer) {
-        this.inputSerializer = inputSerializer;
-        return this;
-    }
-
     /**
      * Factory method called by the RocksDB state backend to create a new instance backed by the
      * provided column family.
@@ -204,7 +207,6 @@ class RocksDBAggregatingMergeState<K, N, IN, ACC, R>
                         registerResult.f1.getStateSerializer(),
                         stateDesc.getDefaultValue(),
                         desc.getAggregateFunction(),
-                        desc.getInputSerializer(),
                         backend);
     }
 
@@ -224,7 +226,6 @@ class RocksDBAggregatingMergeState<K, N, IN, ACC, R>
         return (IS)
                 ((RocksDBAggregatingMergeState<K, N, ?, SV, ?>) existingState)
                         .setAggFunction(desc.getAggregateFunction())
-                        .setInputSerializer(desc.getInputSerializer())
                         .setNamespaceSerializer(registerResult.f1.getNamespaceSerializer())
                         .setValueSerializer(registerResult.f1.getStateSerializer())
                         .setDefaultValue(stateDesc.getDefaultValue())

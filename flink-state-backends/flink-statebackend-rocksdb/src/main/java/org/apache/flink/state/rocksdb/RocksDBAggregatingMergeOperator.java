@@ -23,6 +23,8 @@ import org.apache.flink.core.memory.DataInputDeserializer;
 import org.apache.flink.core.memory.DataOutputSerializer;
 
 import org.rocksdb.AbstractAssociativeMergeOperator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
 
@@ -31,10 +33,13 @@ import java.nio.ByteBuffer;
  * merge state operands. Used by {@link RocksDBAggregatingMergeState} to avoid synchronous reads on
  * {@code add()}.
  *
- * <p>The stored base value is a serialized {@code ACC} (accumulator). Each merge operand is a
- * serialized {@code IN} (input value). On each {@code merge} call, the operand is added to the
- * accumulator via {@link AggregateFunction#add}. If no existing value is present, a fresh
- * accumulator is created via {@link AggregateFunction#createAccumulator()}.
+ * <p>Both the stored base value and each merge operand are serialized {@code ACC} (accumulator)
+ * values. {@link RocksDBAggregatingMergeState#add} converts each {@code IN} input into an
+ * {@code ACC} via {@link AggregateFunction#add} before writing the merge operand, so the
+ * operator always handles {@code ACC} on both sides. On each {@code merge} call the two
+ * accumulators are combined via {@link AggregateFunction#merge}. If no existing value is
+ * present, a fresh accumulator is created via {@link AggregateFunction#createAccumulator()}
+ * and the operand is merged into it.
  *
  * <p>Thread safety: fresh serializer instances are created per call.
  *
@@ -44,25 +49,53 @@ import java.nio.ByteBuffer;
  */
 class RocksDBAggregatingMergeOperator<IN, ACC, OUT> extends AbstractAssociativeMergeOperator {
 
+    private static final Logger LOG =
+            LoggerFactory.getLogger(RocksDBAggregatingMergeOperator.class);
+
     private final AggregateFunction<IN, ACC, OUT> aggFunction;
-    private final TypeSerializer<IN> inputSerializer;
     private final TypeSerializer<ACC> accSerializer;
 
     /**
-     * Creates a new operator with the given aggregate function and serializers.
+     * Class loader captured from the user thread at construction time. RocksDB invokes {@link
+     * #merge} from a native compaction thread that is attached to the JVM with no context class
+     * loader set (null). Serializers backed by Kryo call {@code
+     * Thread.currentThread().getContextClassLoader()} during lazy initialization and fail with
+     * {@code IllegalArgumentException: classLoader cannot be null}. We restore this class loader on
+     * the compaction thread before any (de)serialization and clean it up in a finally block.
+     */
+    private final ClassLoader userClassLoader;
+
+    /**
+     * Creates a new operator with the given aggregate function and serializers. Captures the
+     * context class loader of the calling thread as the user class loader.
      *
      * @param aggFunction the aggregate function to apply during merge
-     * @param inputSerializer serializer for input values ({@code IN})
      * @param accSerializer serializer for accumulator values ({@code ACC})
      */
     RocksDBAggregatingMergeOperator(
             AggregateFunction<IN, ACC, OUT> aggFunction,
-            TypeSerializer<IN> inputSerializer,
             TypeSerializer<ACC> accSerializer) {
+        this(aggFunction, accSerializer, Thread.currentThread().getContextClassLoader());
+    }
+
+    /**
+     * Creates a new operator with an explicit user class loader. Use this overload when the
+     * calling thread's context class loader may not be the user code class loader — e.g., during
+     * restore from checkpoint/savepoint where the class loader is supplied explicitly.
+     *
+     * @param aggFunction the aggregate function to apply during merge
+     * @param accSerializer serializer for accumulator values ({@code ACC})
+     * @param userClassLoader the class loader to set on RocksDB compaction threads before
+     *     (de)serialization
+     */
+    RocksDBAggregatingMergeOperator(
+            AggregateFunction<IN, ACC, OUT> aggFunction,
+            TypeSerializer<ACC> accSerializer,
+            ClassLoader userClassLoader) {
         super();
         this.aggFunction = aggFunction;
-        this.inputSerializer = inputSerializer;
         this.accSerializer = accSerializer;
+        this.userClassLoader = userClassLoader;
     }
 
     @Override
@@ -74,20 +107,27 @@ class RocksDBAggregatingMergeOperator<IN, ACC, OUT> extends AbstractAssociativeM
      * Applies the aggregate function to fold a single operand into the existing accumulator.
      *
      * <p>If no existing value is present a fresh accumulator is created via {@link
-     * AggregateFunction#createAccumulator()}. The operand (serialized {@code IN}) is deserialized
-     * and added to the accumulator via {@link AggregateFunction#add}. The resulting accumulator is
-     * serialized and returned as the new base value.
+     * AggregateFunction#createAccumulator()}. The operand (serialized {@code ACC}) is deserialized
+     * and merged into the accumulator via {@link AggregateFunction#merge}. The resulting
+     * accumulator is serialized and written into {@code output}.
      *
      * @param key the RocksDB key (unused)
      * @param existing the current base value (serialized {@code ACC}), or {@code null} if absent
-     * @param value the merge operand (serialized {@code IN})
-     * @return the serialized merged accumulator
+     * @param value the merge operand (serialized {@code ACC})
+     * @param output writable direct ByteBuffer to receive the merged result (position=0 on entry)
+     * @return the number of bytes written to {@code output}, or {@code -1} on failure
      */
     @Override
-    public byte[] merge(ByteBuffer key, ByteBuffer existing, ByteBuffer value) {
+    public int merge(ByteBuffer key, ByteBuffer existing, ByteBuffer value, ByteBuffer output) {
+        // Restore the user class loader on this (native compaction) thread so that serializers
+        // backed by Kryo can initialize without hitting "classLoader cannot be null".
+        Thread thread = Thread.currentThread();
+        ClassLoader savedClassLoader = thread.getContextClassLoader();
+        thread.setContextClassLoader(userClassLoader);
         try {
             DataInputDeserializer input = new DataInputDeserializer();
-            TypeSerializer<IN> inSer = inputSerializer.duplicate();
+            // duplicate() produces an independent serializer instance, making this method
+            // safe to call concurrently from multiple compaction threads.
             TypeSerializer<ACC> accSer = accSerializer.duplicate();
 
             ACC acc;
@@ -97,21 +137,24 @@ class RocksDBAggregatingMergeOperator<IN, ACC, OUT> extends AbstractAssociativeM
                 acc = aggFunction.createAccumulator();
             }
 
-            IN inValue = deserializeIn(value, inSer, input);
-            acc = aggFunction.add(inValue, acc);
+            ACC accValue = deserializeAcc(value, accSer, input);
+            acc = aggFunction.merge(accValue, acc);
 
-            return serializeAcc(acc, accSer);
+            byte[] resultBytes = serializeAcc(acc, accSer);
+            output.put(resultBytes);
+            return resultBytes.length;
         } catch (Exception e) {
-            throw new RuntimeException("Error in RocksDBAggregatingMergeOperator.merge", e);
+            // Log before returning -1: the JNI bridge treats -1 as a merge failure, causing a
+            // RocksDB background error that surfaces as Corruption(Undefined) at checkpoint time.
+            // Without logging here the failure would be silent.
+            LOG.error(
+                    "RocksDBAggregatingMergeOperator.merge failed — RocksDB will set a background "
+                            + "error and subsequent checkpoints will fail with Corruption(Undefined)",
+                    e);
+            return -1;
+        } finally {
+            thread.setContextClassLoader(savedClassLoader);
         }
-    }
-
-    private IN deserializeIn(ByteBuffer buf, TypeSerializer<IN> ser, DataInputDeserializer input)
-            throws Exception {
-        byte[] bytes = new byte[buf.remaining()];
-        buf.get(bytes);
-        input.setBuffer(bytes);
-        return ser.deserialize(input);
     }
 
     private ACC deserializeAcc(ByteBuffer buf, TypeSerializer<ACC> ser, DataInputDeserializer input)

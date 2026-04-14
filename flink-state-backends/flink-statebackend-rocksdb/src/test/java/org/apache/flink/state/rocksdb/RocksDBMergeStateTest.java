@@ -302,7 +302,6 @@ class RocksDBMergeStateTest {
                     new AggregatingMergeStateDescriptor<>(
                             "aggSum",
                             new AverageAggregateFunction(),
-                            LongSerializer.INSTANCE,
                             LongPrimitiveArraySerializer.INSTANCE);
 
             backend.setCurrentKey(1);
@@ -332,7 +331,6 @@ class RocksDBMergeStateTest {
                     new AggregatingMergeStateDescriptor<>(
                             "aggSum",
                             new AverageAggregateFunction(),
-                            LongSerializer.INSTANCE,
                             LongPrimitiveArraySerializer.INSTANCE);
 
             AggregatingMergeState<Long, long[], Long> state =
@@ -366,7 +364,6 @@ class RocksDBMergeStateTest {
                     new AggregatingMergeStateDescriptor<>(
                             "aggSum",
                             new AverageAggregateFunction(),
-                            LongSerializer.INSTANCE,
                             LongPrimitiveArraySerializer.INSTANCE);
 
             backend.setCurrentKey(1);
@@ -394,7 +391,6 @@ class RocksDBMergeStateTest {
                     new AggregatingMergeStateDescriptor<>(
                             "aggSum",
                             new AverageAggregateFunction(),
-                            LongSerializer.INSTANCE,
                             LongPrimitiveArraySerializer.INSTANCE);
 
             backend.setCurrentKey(1);
@@ -440,7 +436,6 @@ class RocksDBMergeStateTest {
                     new AggregatingMergeStateDescriptor<>(
                             "aggSum",
                             new AverageAggregateFunction(),
-                            LongSerializer.INSTANCE,
                             LongPrimitiveArraySerializer.INSTANCE);
 
             backend.setCurrentKey(1);
@@ -482,7 +477,6 @@ class RocksDBMergeStateTest {
                     new AggregatingMergeStateDescriptor<>(
                             "aggSum",
                             new AverageAggregateFunction(),
-                            LongSerializer.INSTANCE,
                             LongPrimitiveArraySerializer.INSTANCE);
 
             backend.setCurrentKey(1);
@@ -578,7 +572,6 @@ class RocksDBMergeStateTest {
                     new AggregatingMergeStateDescriptor<>(
                             "aggAvg",
                             new AverageAggregateFunction(),
-                            LongSerializer.INSTANCE,
                             LongPrimitiveArraySerializer.INSTANCE);
 
             backend.setCurrentKey(1);
@@ -608,7 +601,6 @@ class RocksDBMergeStateTest {
                     new AggregatingMergeStateDescriptor<>(
                             "aggAvg",
                             new AverageAggregateFunction(),
-                            LongSerializer.INSTANCE,
                             LongPrimitiveArraySerializer.INSTANCE);
 
             backend.setCurrentKey(1);
@@ -673,7 +665,6 @@ class RocksDBMergeStateTest {
                     new AggregatingMergeStateDescriptor<>(
                             "aggregatingMergeState",
                             new AverageAggregateFunction(),
-                            LongSerializer.INSTANCE,
                             LongPrimitiveArraySerializer.INSTANCE);
 
             // --- Key 1: interleave writes to all four state types ---
@@ -836,7 +827,6 @@ class RocksDBMergeStateTest {
                     new AggregatingMergeStateDescriptor<>(
                             "perf_aggregating_merge",
                             new AverageAggregateFunction(),
-                            LongSerializer.INSTANCE,
                             LongPrimitiveArraySerializer.INSTANCE);
             AggregatingMergeState<Long, long[], Long> aggMergeState =
                     backend.getPartitionedState(
@@ -891,7 +881,6 @@ class RocksDBMergeStateTest {
                 new AggregatingMergeStateDescriptor<>(
                         "aggAvg",
                         new AverageAggregateFunction(),
-                        LongSerializer.INSTANCE,
                         LongPrimitiveArraySerializer.INSTANCE);
 
         KeyedStateHandle handle;
@@ -1002,7 +991,6 @@ class RocksDBMergeStateTest {
                 new AggregatingMergeStateDescriptor<>(
                         "aggAvg",
                         new AverageAggregateFunction(),
-                        LongSerializer.INSTANCE,
                         LongPrimitiveArraySerializer.INSTANCE);
 
         KeyedStateHandle handle;
@@ -1114,7 +1102,6 @@ class RocksDBMergeStateTest {
                 new AggregatingMergeStateDescriptor<>(
                         "aggAvg",
                         new AverageAggregateFunction(),
-                        LongSerializer.INSTANCE,
                         LongPrimitiveArraySerializer.INSTANCE);
 
         KeyedStateHandle handle;

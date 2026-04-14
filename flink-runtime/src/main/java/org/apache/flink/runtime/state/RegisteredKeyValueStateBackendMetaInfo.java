@@ -58,40 +58,6 @@ public class RegisteredKeyValueStateBackendMetaInfo<N, S> extends RegisteredStat
      */
     @Nullable private final byte[] mergeFunctionBytes;
 
-    /**
-     * Input-type serializer provider for {@code AggregatingMergeState}. Null for all other state
-     * types.
-     *
-     * <p>{@code AggregatingMergeState<IN, ACC, OUT>} has three distinct types. Two of them are
-     * written to RocksDB and each requires its own serializer:
-     *
-     * <ul>
-     *   <li>The base value is the accumulator ({@code ACC}), serialized by {@link
-     *       #stateSerializerProvider} (where {@code S = ACC}).
-     *   <li>Each {@code add()} call writes a merge operand containing a serialized {@code IN} value
-     *       via {@code db.merge()}, without reading the accumulator. This operand is serialized by
-     *       this provider.
-     * </ul>
-     *
-     * <p>During compaction or on {@code get()}, RocksDB invokes the merge operator, which must
-     * deserialize the base value as {@code ACC} and each operand as {@code IN} separately. Since
-     * {@code IN} and {@code ACC} may be different types, a dedicated serializer for {@code IN} is
-     * required.
-     *
-     * <p>There is no corresponding merge output serializer because the output ({@code OUT}) is
-     * never stored in RocksDB. On {@code get()}, Flink reads and deserializes the {@code ACC}, then
-     * calls {@code aggFunction.getResult(acc)} in-memory. {@code OUT} only exists as a transient
-     * Java object returned to the caller.
-     *
-     * <p>For {@code ReducingMergeState<T>}, all three roles (input, accumulator, output) share the
-     * same type {@code T}, so {@link #stateSerializerProvider} alone suffices and this field is
-     * null.
-     *
-     * <p>This provider is also persisted in the state snapshot so that the merge operator can be
-     * reconstructed with the correct {@code IN}-type serializer during restore.
-     */
-    @Nullable private final StateSerializerProvider<?> mergeInputSerializerProvider;
-
     public RegisteredKeyValueStateBackendMetaInfo(
             @Nonnull StateDescriptor.Type stateType,
             @Nonnull String name,
@@ -104,7 +70,6 @@ public class RegisteredKeyValueStateBackendMetaInfo<N, S> extends RegisteredStat
                 StateSerializerProvider.fromNewRegisteredSerializer(namespaceSerializer),
                 StateSerializerProvider.fromNewRegisteredSerializer(stateSerializer),
                 StateSnapshotTransformFactory.noTransform(),
-                null,
                 null);
     }
 
@@ -121,7 +86,6 @@ public class RegisteredKeyValueStateBackendMetaInfo<N, S> extends RegisteredStat
                 StateSerializerProvider.fromNewRegisteredSerializer(namespaceSerializer),
                 StateSerializerProvider.fromNewRegisteredSerializer(stateSerializer),
                 stateSnapshotTransformFactory,
-                null,
                 null);
     }
 
@@ -135,8 +99,7 @@ public class RegisteredKeyValueStateBackendMetaInfo<N, S> extends RegisteredStat
             @Nonnull TypeSerializer<N> namespaceSerializer,
             @Nonnull TypeSerializer<S> stateSerializer,
             @Nonnull StateSnapshotTransformFactory<S> stateSnapshotTransformFactory,
-            @Nullable byte[] mergeFunctionBytes,
-            @Nullable TypeSerializer<?> mergeInputSerializer) {
+            @Nullable byte[] mergeFunctionBytes) {
 
         this(
                 stateType,
@@ -144,11 +107,7 @@ public class RegisteredKeyValueStateBackendMetaInfo<N, S> extends RegisteredStat
                 StateSerializerProvider.fromNewRegisteredSerializer(namespaceSerializer),
                 StateSerializerProvider.fromNewRegisteredSerializer(stateSerializer),
                 stateSnapshotTransformFactory,
-                mergeFunctionBytes,
-                mergeInputSerializer == null
-                        ? null
-                        : StateSerializerProvider.fromNewRegisteredSerializer(
-                                mergeInputSerializer));
+                mergeFunctionBytes);
     }
 
     @SuppressWarnings("unchecked")
@@ -171,23 +130,10 @@ public class RegisteredKeyValueStateBackendMetaInfo<N, S> extends RegisteredStat
                                                 StateMetaInfoSnapshot.CommonSerializerKeys
                                                         .VALUE_SERIALIZER))),
                 StateSnapshotTransformFactory.noTransform(),
-                snapshot.getBinaryOption(MERGE_FUNCTION_BYTES_KEY),
-                restoreMergeInputSerializerProvider(snapshot));
+                snapshot.getBinaryOption(MERGE_FUNCTION_BYTES_KEY));
 
         Preconditions.checkState(
                 StateMetaInfoSnapshot.BackendStateType.KEY_VALUE == snapshot.getBackendStateType());
-    }
-
-    @SuppressWarnings("unchecked")
-    private static StateSerializerProvider<?> restoreMergeInputSerializerProvider(
-            StateMetaInfoSnapshot snapshot) {
-        TypeSerializerSnapshot<?> inputSnap =
-                snapshot.getTypeSerializerSnapshot(
-                        StateMetaInfoSnapshot.CommonSerializerKeys.MERGE_INPUT_SERIALIZER);
-        return inputSnap == null
-                ? null
-                : StateSerializerProvider.fromPreviousSerializerSnapshot(
-                        (TypeSerializerSnapshot) inputSnap);
     }
 
     public RegisteredKeyValueStateBackendMetaInfo(
@@ -203,7 +149,6 @@ public class RegisteredKeyValueStateBackendMetaInfo<N, S> extends RegisteredStat
                 namespaceSerializerProvider,
                 stateSerializerProvider,
                 stateSnapshotTransformFactory,
-                null,
                 null);
     }
 
@@ -213,8 +158,7 @@ public class RegisteredKeyValueStateBackendMetaInfo<N, S> extends RegisteredStat
             @Nonnull StateSerializerProvider<N> namespaceSerializerProvider,
             @Nonnull StateSerializerProvider<S> stateSerializerProvider,
             @Nonnull StateSnapshotTransformFactory<S> stateSnapshotTransformFactory,
-            @Nullable byte[] mergeFunctionBytes,
-            @Nullable StateSerializerProvider<?> mergeInputSerializerProvider) {
+            @Nullable byte[] mergeFunctionBytes) {
 
         super(name);
         this.stateType = stateType;
@@ -222,7 +166,6 @@ public class RegisteredKeyValueStateBackendMetaInfo<N, S> extends RegisteredStat
         this.stateSerializerProvider = stateSerializerProvider;
         this.stateSnapshotTransformFactory = stateSnapshotTransformFactory;
         this.mergeFunctionBytes = mergeFunctionBytes;
-        this.mergeInputSerializerProvider = mergeInputSerializerProvider;
     }
 
     @Nonnull
@@ -279,17 +222,6 @@ public class RegisteredKeyValueStateBackendMetaInfo<N, S> extends RegisteredStat
     @Nullable
     public byte[] getMergeFunctionBytes() {
         return mergeFunctionBytes;
-    }
-
-    /**
-     * Returns the input-type serializer for {@code AggregatingMergeState}, or {@code null} for all
-     * other state types.
-     */
-    @Nullable
-    public TypeSerializer<?> getMergeInputSerializer() {
-        return mergeInputSerializerProvider == null
-                ? null
-                : mergeInputSerializerProvider.currentSchemaSerializer();
     }
 
     public void updateSnapshotTransformFactory(
@@ -407,17 +339,6 @@ public class RegisteredKeyValueStateBackendMetaInfo<N, S> extends RegisteredStat
         serializerMap.put(valueSerializerKey, stateSerializer.duplicate());
         serializerConfigSnapshotsMap.put(
                 valueSerializerKey, stateSerializer.snapshotConfiguration());
-
-        // Persist the input serializer for AggregatingMergeState so that the merge operator
-        // can be reconstructed with the correct IN-type serializer during restore.
-        if (mergeInputSerializerProvider != null) {
-            String inputSerializerKey =
-                    StateMetaInfoSnapshot.CommonSerializerKeys.MERGE_INPUT_SERIALIZER.toString();
-            TypeSerializer<?> inputSerializer =
-                    mergeInputSerializerProvider.currentSchemaSerializer();
-            serializerConfigSnapshotsMap.put(
-                    inputSerializerKey, inputSerializer.snapshotConfiguration());
-        }
 
         Map<String, byte[]> binaryOptionsMap;
         if (mergeFunctionBytes != null) {

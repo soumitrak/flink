@@ -169,6 +169,28 @@ public abstract class RocksDBSnapshotStrategyBase<K, R extends SnapshotResources
 
     private void takeDBNativeCheckpoint(@Nonnull SnapshotDirectory outputDirectory)
             throws Exception {
+        // Proactively check for a pre-existing RocksDB background error. Such an error is
+        // typically set when a background compaction or flush fails — most commonly because a
+        // custom merge operator's merge() method threw an exception that was silently swallowed
+        // by the JNI bridge (which clears the Java exception and returns false from Merge()).
+        // Without this check the opaque "Corruption(Undefined)" from createCheckpoint below
+        // would be the only signal, making the root cause very hard to diagnose.
+        try {
+            String bgError = db.getProperty("rocksdb.background-error");
+            if (bgError != null && !bgError.isEmpty() && !"OK".equals(bgError)) {
+                LOG.error(
+                        "RocksDB has a pre-existing background error before checkpoint: '{}'. "
+                                + "This is likely caused by a custom merge operator (e.g. "
+                                + "RocksDBReducingMergeOperator / RocksDBAggregatingMergeOperator) "
+                                + "throwing an exception during background compaction. "
+                                + "Check task manager logs for 'merge failed' error messages.",
+                        bgError);
+            }
+        } catch (Exception ignored) {
+            // getProperty may fail if the DB is already in a bad state; proceed to let
+            // createCheckpoint produce its own error.
+        }
+
         // create hard links of living files in the output path
         try (ResourceGuard.Lease ignored = rocksDBResourceGuard.acquireResource();
                 Checkpoint checkpoint = Checkpoint.create(db)) {

@@ -46,24 +46,20 @@ public class AggregatingMergeStateDescriptor<IN, ACC, OUT>
     private static final long serialVersionUID = 1L;
 
     private final AggregateFunction<IN, ACC, OUT> aggFunction;
-    private final TypeSerializer<IN> inputSerializer;
 
     /**
      * Creates a new {@code AggregatingMergeStateDescriptor}.
      *
      * @param name The (unique) name for the state.
      * @param aggFunction The {@code AggregateFunction} used to aggregate the state.
-     * @param inputSerializer Serializer for input values ({@code IN}).
      * @param accType The type of the accumulator stored in the state.
      */
     public AggregatingMergeStateDescriptor(
             String name,
             AggregateFunction<IN, ACC, OUT> aggFunction,
-            TypeSerializer<IN> inputSerializer,
             Class<ACC> accType) {
         super(name, accType, null);
         this.aggFunction = checkNotNull(aggFunction);
-        this.inputSerializer = checkNotNull(inputSerializer);
     }
 
     /**
@@ -71,17 +67,14 @@ public class AggregatingMergeStateDescriptor<IN, ACC, OUT>
      *
      * @param name The (unique) name for the state.
      * @param aggFunction The {@code AggregateFunction} used to aggregate the state.
-     * @param inputSerializer Serializer for input values ({@code IN}).
      * @param accTypeInfo Type information for the accumulator.
      */
     public AggregatingMergeStateDescriptor(
             String name,
             AggregateFunction<IN, ACC, OUT> aggFunction,
-            TypeSerializer<IN> inputSerializer,
             TypeInformation<ACC> accTypeInfo) {
         super(name, accTypeInfo, null);
         this.aggFunction = checkNotNull(aggFunction);
-        this.inputSerializer = checkNotNull(inputSerializer);
     }
 
     /**
@@ -89,27 +82,19 @@ public class AggregatingMergeStateDescriptor<IN, ACC, OUT>
      *
      * @param name The (unique) name for the state.
      * @param aggFunction The {@code AggregateFunction} used to aggregate the state.
-     * @param inputSerializer Serializer for input values ({@code IN}).
      * @param accSerializer Serializer for the accumulator.
      */
     public AggregatingMergeStateDescriptor(
             String name,
             AggregateFunction<IN, ACC, OUT> aggFunction,
-            TypeSerializer<IN> inputSerializer,
             TypeSerializer<ACC> accSerializer) {
         super(name, accSerializer, null);
         this.aggFunction = checkNotNull(aggFunction);
-        this.inputSerializer = checkNotNull(inputSerializer);
     }
 
     /** Returns the aggregate function. */
     public AggregateFunction<IN, ACC, OUT> getAggregateFunction() {
         return aggFunction;
-    }
-
-    /** Returns the serializer for input values ({@code IN}). */
-    public TypeSerializer<IN> getInputSerializer() {
-        return inputSerializer;
     }
 
     @Override

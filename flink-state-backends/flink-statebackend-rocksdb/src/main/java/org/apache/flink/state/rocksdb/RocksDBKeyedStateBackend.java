@@ -77,6 +77,7 @@ import org.apache.flink.util.Preconditions;
 import org.apache.flink.util.ResourceGuard;
 import org.apache.flink.util.StateMigrationException;
 
+import org.rocksdb.AbstractAssociativeMergeOperator;
 import org.rocksdb.ColumnFamilyHandle;
 import org.rocksdb.ColumnFamilyOptions;
 import org.rocksdb.ReadOptions;
@@ -766,7 +767,7 @@ public class RocksDBKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                     AggregatingMergeStateDescriptor<IN, ACC, OUT> mergeDesc,
                     TypeSerializer<ACC> accSerializer) {
         return new RocksDBAggregatingMergeOperator<>(
-                mergeDesc.getAggregateFunction(), mergeDesc.getInputSerializer(), accSerializer);
+                mergeDesc.getAggregateFunction(), accSerializer);
     }
 
     /**
@@ -818,7 +819,6 @@ public class RocksDBKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
             // Serialize the merge function for REDUCING_MERGE / AGGREGATING_MERGE so that the
             // correct merge operator can be reconstructed during checkpoint / savepoint restore.
             byte[] mergeFunctionBytes = null;
-            TypeSerializer<?> mergeInputSerializer = null;
             if (stateDesc instanceof ReducingMergeStateDescriptor) {
                 try {
                     mergeFunctionBytes =
@@ -846,7 +846,6 @@ public class RocksDBKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                                     + "'",
                             e);
                 }
-                mergeInputSerializer = aggDesc.getInputSerializer();
             }
 
             newMetaInfo =
@@ -856,8 +855,7 @@ public class RocksDBKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
                             namespaceSerializer,
                             stateSerializer,
                             StateSnapshotTransformFactory.noTransform(),
-                            mergeFunctionBytes,
-                            mergeInputSerializer);
+                            mergeFunctionBytes);
 
             newMetaInfo =
                     allowFutureMetadataUpdates
@@ -1220,10 +1218,27 @@ public class RocksDBKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
         public final ColumnFamilyHandle columnFamilyHandle;
         public final RegisteredStateMetaInfoBase metaInfo;
 
+        /**
+         * Strong Java reference to the custom merge operator, if this state uses one. Keeping this
+         * reference ensures the operator cannot be garbage-collected while the column family is
+         * open, guarding against native use-after-free if the JVM GC runs between the time the
+         * ColumnFamilyOptions goes out of scope and RocksDB's internal ColumnFamilyData releases
+         * its own shared_ptr.
+         */
+        @Nullable public final AbstractAssociativeMergeOperator mergeOperator;
+
         public RocksDbKvStateInfo(
                 ColumnFamilyHandle columnFamilyHandle, RegisteredStateMetaInfoBase metaInfo) {
+            this(columnFamilyHandle, metaInfo, null);
+        }
+
+        public RocksDbKvStateInfo(
+                ColumnFamilyHandle columnFamilyHandle,
+                RegisteredStateMetaInfoBase metaInfo,
+                @Nullable AbstractAssociativeMergeOperator mergeOperator) {
             this.columnFamilyHandle = columnFamilyHandle;
             this.metaInfo = metaInfo;
+            this.mergeOperator = mergeOperator;
         }
 
         @Override

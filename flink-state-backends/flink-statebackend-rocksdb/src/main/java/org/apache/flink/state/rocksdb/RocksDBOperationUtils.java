@@ -329,7 +329,7 @@ public class RocksDBOperationUtils {
                             Collections.emptyList(),
                             cancelStreamRegistryForRestore);
             return new RocksDBKeyedStateBackend.RocksDbKvStateInfo(
-                    columnFamilyHandle, metaInfoBase);
+                    columnFamilyHandle, metaInfoBase, mergeOperator);
         } catch (Exception ex) {
             IOUtils.closeQuietly(columnFamilyDescriptor.getOptions());
             throw new FlinkRuntimeException(
@@ -397,19 +397,16 @@ public class RocksDBOperationUtils {
                             InstantiationUtil.deserializeObject(functionBytes, userCodeClassLoader);
                     return new RocksDBReducingMergeOperator<>(
                             (ReduceFunction) reduceFunction,
-                            (TypeSerializer) metaInfo.getStateSerializer());
+                            (TypeSerializer) metaInfo.getStateSerializer(),
+                            userCodeClassLoader);
 
                 case AGGREGATING_MERGE:
                     AggregateFunction<?, ?, ?> aggFunction =
                             InstantiationUtil.deserializeObject(functionBytes, userCodeClassLoader);
-                    TypeSerializer<?> inputSerializer = metaInfo.getMergeInputSerializer();
-                    if (inputSerializer == null) {
-                        return null;
-                    }
                     return new RocksDBAggregatingMergeOperator<>(
                             (AggregateFunction) aggFunction,
-                            (TypeSerializer) inputSerializer,
-                            (TypeSerializer) metaInfo.getStateSerializer());
+                            (TypeSerializer) metaInfo.getStateSerializer(),
+                            userCodeClassLoader);
 
                 default:
                     return null;

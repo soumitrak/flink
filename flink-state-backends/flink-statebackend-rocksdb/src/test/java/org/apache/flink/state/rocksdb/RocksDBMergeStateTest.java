@@ -584,7 +584,7 @@ class RocksDBMergeStateTest {
             assertThat(state.get()).isEqualTo(15L); // (10+20)/2
 
             // set() must overwrite the previously merged accumulator
-            state.set(new long[] {100L, 1L}); // acc = [sum=100, count=1]
+            state.setAcc(new long[] {100L, 1L}); // acc = [sum=100, count=1]
             assertThat(state.get()).isEqualTo(100L); // 100/1
         } finally {
             backend.dispose();
@@ -609,7 +609,7 @@ class RocksDBMergeStateTest {
                             VoidNamespace.INSTANCE, VoidNamespaceSerializer.INSTANCE, desc);
 
             // seed the accumulator, then add more values on top
-            state.set(new long[] {100L, 1L}); // acc = [sum=100, count=1]
+            state.setAcc(new long[] {100L, 1L}); // acc = [sum=100, count=1]
             state.add(50L); // acc = [sum=150, count=2]
             assertThat(state.get()).isEqualTo(75L); // 150/2
         } finally {

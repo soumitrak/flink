@@ -39,10 +39,20 @@ import org.apache.flink.annotation.PublicEvolving;
 public interface AggregatingMergeState<IN, ACC, OUT> extends AggregatingState<IN, OUT> {
 
     /**
+     * Overwrites the current state with the given value, discarding any previously merged
+     * operands. Subsequent {@code add()} calls will be aggregated on top of this value.
+     * The implementation must create the accumulator with this value and store the
+     * accumulator.
+     *
+     * @param value the value to set as the new state
+     */
+    void set(IN value) throws Exception;
+
+    /**
      * Overwrites the current state with the given accumulator, discarding any previously merged
      * operands. Subsequent {@code add()} calls will be aggregated on top of this accumulator.
      *
      * @param acc the accumulator value to set as the new state
      */
-    void set(ACC acc) throws Exception;
+    void setAcc(ACC acc) throws Exception;
 }

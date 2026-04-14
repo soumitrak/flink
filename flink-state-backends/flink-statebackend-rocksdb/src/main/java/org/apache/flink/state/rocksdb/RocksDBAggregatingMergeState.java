@@ -105,8 +105,8 @@ class RocksDBAggregatingMergeState<K, N, IN, ACC, R>
      * @param value the value to set as the new state
      */
     @Override
-    public void setValue(IN value) throws Exception {
-        set(aggFunction.add(value, aggFunction.createAccumulator()));
+    public void set(IN value) throws Exception {
+        setAcc(aggFunction.add(value, aggFunction.createAccumulator()));
     }
 
     /**
@@ -115,7 +115,7 @@ class RocksDBAggregatingMergeState<K, N, IN, ACC, R>
      * this accumulator.
      */
     @Override
-    public void set(ACC acc) throws RocksDBException {
+    public void setAcc(ACC acc) throws RocksDBException {
         updateInternal(acc);
     }
 
